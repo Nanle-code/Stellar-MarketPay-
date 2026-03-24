@@ -14,7 +14,7 @@ const api = axios.create({
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
 
-export async function fetchJobs(params?: { category?: string; status?: string; limit?: number }) {
+export async function fetchJobs(params?: { category?: string; status?: string; limit?: number; search?: string }) {
   const { data } = await api.get<{ success: boolean; data: Job[] }>("/api/jobs", { params });
   return data.data;
 }

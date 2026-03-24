@@ -57,10 +57,18 @@ function getJob(id) {
   return job;
 }
 
-function listJobs({ category, status = "open", limit = 50 } = {}) {
+function listJobs({ category, status = "open", limit = 50, search } = {}) {
   let result = Array.from(jobs.values());
   if (status && VALID_STATUSES.includes(status)) result = result.filter(j => j.status === status);
   if (category) result = result.filter(j => j.category === category);
+  if (search) {
+    const term = search.toLowerCase();
+    result = result.filter(j => 
+      j.title.toLowerCase().includes(term) ||
+      j.description.toLowerCase().includes(term) ||
+      (j.skills && j.skills.some(s => s.toLowerCase().includes(term)))
+    );
+  }
   return result
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, Math.min(limit, 100));

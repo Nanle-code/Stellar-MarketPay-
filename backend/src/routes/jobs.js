@@ -6,11 +6,11 @@ const express = require("express");
 const router  = express.Router();
 const { createJob, getJob, listJobs, listJobsByClient } = require("../services/jobService");
 
-// GET /api/jobs — list jobs (with optional ?category=&status=&limit=)
+// GET /api/jobs — list jobs (with optional ?category=&status=&limit=&search=)
 router.get("/", (req, res, next) => {
   try {
-    const { category, status, limit } = req.query;
-    res.json({ success: true, data: listJobs({ category, status, limit: parseInt(limit) || 50 }) });
+    const { category, status, limit, search } = req.query;
+    res.json({ success: true, data: listJobs({ category, status, limit: parseInt(limit) || 50, search }) });
   } catch (e) { next(e); }
 });
 
