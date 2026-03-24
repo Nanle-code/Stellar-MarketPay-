@@ -4,11 +4,14 @@
  */
 import Link from "next/link";
 import type { Job } from "@/utils/types";
-import { formatXLM, timeAgo, statusLabel, statusClass, shortenAddress } from "@/utils/format";
+import { formatXLM, timeAgo, statusLabel, statusClass, shortenAddress, formatUSDEquivalent } from "@/utils/format";
+import { usePriceContext } from "@/contexts/PriceContext";
 
 interface JobCardProps { job: Job; }
 
 export default function JobCard({ job }: JobCardProps) {
+  const { xlmPriceUsd } = usePriceContext();
+  const usdEquivalent = formatUSDEquivalent(job.budget, xlmPriceUsd);
   return (
     <Link href={`/jobs/${job.id}`}>
       <div className="card-hover group animate-fade-in">
@@ -46,6 +49,9 @@ export default function JobCard({ job }: JobCardProps) {
           <div>
             <p className="text-xs text-amber-800 mb-0.5">Budget</p>
             <p className="font-mono font-semibold text-market-400 text-sm">{formatXLM(job.budget)}</p>
+            {usdEquivalent && (
+              <p className="text-xs text-amber-800/60 mt-0.5">{usdEquivalent}</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-amber-800 mb-0.5">{job.applicantCount} applicant{job.applicantCount !== 1 ? "s" : ""}</p>

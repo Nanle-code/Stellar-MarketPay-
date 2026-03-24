@@ -45,3 +45,15 @@ export const JOB_CATEGORIES = [
   "UI/UX Design", "Technical Writing", "DevOps", "Security Audit",
   "Data Analysis", "Mobile Development", "Other",
 ];
+
+/**
+ * Converts an XLM amount to a USD equivalent string.
+ * Returns null if price is unavailable so callers can fail silently.
+ */
+export function formatUSDEquivalent(xlmAmount: string | number, xlmPriceUsd: number | null): string | null {
+  if (xlmPriceUsd === null) return null;
+  const num = typeof xlmAmount === "string" ? parseFloat(xlmAmount) : xlmAmount;
+  if (isNaN(num)) return null;
+  const usd = (num * xlmPriceUsd).toFixed(2);
+  return `≈ $${usd} USD`;
+}
