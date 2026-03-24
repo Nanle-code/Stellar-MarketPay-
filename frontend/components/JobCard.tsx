@@ -4,18 +4,14 @@
  */
 import { formatDeadline, formatXLM, statusClass, statusLabel, timeAgo } from "@/utils/format";
 import type { Job } from "@/utils/types";
-import Link from "next/link";
+import { formatXLM, timeAgo, statusLabel, statusClass, shortenAddress, formatUSDEquivalent } from "@/utils/format";
+import { usePriceContext } from "@/contexts/PriceContext";
 
 interface JobCardProps { job: Job; }
 
 export default function JobCard({ job }: JobCardProps) {
-  const formattedDeadline = job.deadline ? formatDeadline(job.deadline) : "";
-  const deadlineTime = job.deadline ? new Date(job.deadline).getTime() : NaN;
-  const hasValidDeadline = !!formattedDeadline && !Number.isNaN(deadlineTime);
-  const msUntilDeadline = hasValidDeadline ? deadlineTime - Date.now() : null;
-  const isClosed = msUntilDeadline !== null && msUntilDeadline < 0;
-  const isClosingSoon = msUntilDeadline !== null && msUntilDeadline >= 0 && msUntilDeadline <= 72 * 60 * 60 * 1000;
-
+  const { xlmPriceUsd } = usePriceContext();
+  const usdEquivalent = formatUSDEquivalent(job.budget, xlmPriceUsd);
   return (
     <Link href={`/jobs/${job.id}`}>
       <div className="card-hover group animate-fade-in">
@@ -53,6 +49,9 @@ export default function JobCard({ job }: JobCardProps) {
           <div>
             <p className="text-xs text-amber-800 mb-0.5">Budget</p>
             <p className="font-mono font-semibold text-market-400 text-sm">{formatXLM(job.budget)}</p>
+            {usdEquivalent && (
+              <p className="text-xs text-amber-800/60 mt-0.5">{usdEquivalent}</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-amber-800 mb-0.5">

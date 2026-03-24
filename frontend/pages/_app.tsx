@@ -5,6 +5,7 @@ import Navbar from "@/components/Navbar";
 import { connectWallet, getConnectedPublicKey } from "@/lib/wallet";
 import "@/styles/globals.css";
 import { ToastProvider } from "@/components/Toast";
+import { PriceProvider } from "@/contexts/PriceContext";
 
 export default function App({ Component, pageProps }: AppProps) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -21,6 +22,7 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <>
       <ToastProvider>
+        <PriceProvider>
         <Head>
           <title>Stellar MarketPay — Decentralised Freelance Marketplace</title>
           <meta name="description" content="Post jobs, hire freelancers, and pay with XLM — secured by Soroban smart contracts." />
@@ -32,6 +34,7 @@ export default function App({ Component, pageProps }: AppProps) {
             <Component {...pageProps} publicKey={publicKey} onConnect={handleConnect} />
           </main>
         </div>
+        </PriceProvider>
       </ToastProvider>
     </>
   );
