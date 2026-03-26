@@ -5,6 +5,7 @@
 
 import { isConnected, getPublicKey, signTransaction, requestAccess, isAllowed } from "@stellar/freighter-api";
 import { NETWORK_PASSPHRASE } from "./stellar";
+import { fetchAuthChallenge, verifyAuthChallenge, setJwtToken } from "./api";
 
 export async function isFreighterInstalled(): Promise<boolean> {
   try {
@@ -51,6 +52,28 @@ export async function getConnectedPublicKey(): Promise<string | null> {
     return pk || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Run the full SEP-0010 auth flow after wallet connection.
+ * Returns the JWT on success, or an error string.
+ */
+export async function performSEP0010Auth(
+  publicKey: string
+): Promise<{ token: string | null; error: string | null }> {
+  try {
+    const challengeXDR = await fetchAuthChallenge(publicKey);
+    const { signedXDR, error: signError } = await signTransactionWithWallet(challengeXDR);
+    if (signError || !signedXDR) {
+      return { token: null, error: signError || "Failed to sign challenge" };
+    }
+    const token = await verifyAuthChallenge(signedXDR);
+    setJwtToken(token);
+    return { token, error: null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { token: null, error: `Authentication failed: ${msg}` };
   }
 }
 
