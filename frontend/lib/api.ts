@@ -4,11 +4,12 @@
  */
 
 import axios from "axios";
-import type { Job, Application, UserProfile } from "@/utils/types";
+import type { Job, Application, UserProfile, Rating } from "@/utils/types";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000",
   headers: { "Content-Type": "application/json" },
+  withCredentials: true,
   timeout: 10000,
 });
 
@@ -101,5 +102,22 @@ export async function upsertProfile(payload: Partial<UserProfile> & { publicKey:
 
 export async function releaseEscrow(jobId: string, clientAddress: string) {
   const { data } = await api.post(`/api/escrow/${jobId}/release`, { clientAddress });
+  return data.data;
+}
+
+// ─── Ratings ──────────────────────────────────────────────────────────────────
+
+export async function submitRating(payload: {
+  jobId: string;
+  ratedAddress: string;
+  stars: number;
+  review?: string;
+}) {
+  const { data } = await api.post<{ success: boolean; data: Rating }>("/api/ratings", payload);
+  return data.data;
+}
+
+export async function fetchRatings(publicKey: string) {
+  const { data } = await api.get<{ success: boolean; data: Rating[] }>(`/api/ratings/${publicKey}`);
   return data.data;
 }

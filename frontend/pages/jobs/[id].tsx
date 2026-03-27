@@ -7,6 +7,7 @@ import { useRouter } from "next/router";
 import Link from "next/link";
 import ApplicationForm from "@/components/ApplicationForm";
 import WalletConnect from "@/components/WalletConnect";
+import RatingForm from "@/components/RatingForm";
 import { fetchJob, fetchApplications, acceptApplication, releaseEscrow } from "@/lib/api";
 import { formatXLM, timeAgo, formatDate, shortenAddress, statusLabel, statusClass } from "@/utils/format";
 import { accountUrl } from "@/lib/stellar";
@@ -29,6 +30,7 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
   const [releasingEscrow, setReleasingEscrow] = useState(false);
   const [releaseSuccess, setReleaseSuccess] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
 
   const isClient     = publicKey && job?.clientAddress === publicKey;
   const isFreelancer = publicKey && job?.freelancerAddress === publicKey;
@@ -225,10 +227,32 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
       )}
 
       {/* Freelancer job status */}
-      {isFreelancer && (
+      {isFreelancer && job.status !== "completed" && (
         <div className="card border-market-500/20 text-center py-8">
           <p className="font-display text-lg text-amber-100 mb-1">You are working on this job</p>
           <p className="text-amber-800 text-sm">Deliver the work and the client will release <span className="text-market-400 font-mono">{formatXLM(job.budget)}</span> from escrow.</p>
+        </div>
+      )}
+
+      {/* Rating section (job completed) */}
+      {job.status === "completed" && publicKey && !ratingSubmitted && (
+        <div className="mt-6">
+          {isClient && job.freelancerAddress && (
+            <RatingForm
+              jobId={job.id}
+              ratedAddress={job.freelancerAddress}
+              ratedLabel="the freelancer"
+              onSuccess={() => setRatingSubmitted(true)}
+            />
+          )}
+          {isFreelancer && (
+            <RatingForm
+              jobId={job.id}
+              ratedAddress={job.clientAddress}
+              ratedLabel="the client"
+              onSuccess={() => setRatingSubmitted(true)}
+            />
+          )}
         </div>
       )}
     </div>

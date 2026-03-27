@@ -2,27 +2,47 @@
  * components/WalletConnect.tsx
  */
 import { useState } from "react";
-import { connectWallet, isFreighterInstalled } from "@/lib/wallet";
+import { connectWallet, isFreighterInstalled, performSEP0010Auth } from "@/lib/wallet";
 
 interface WalletConnectProps { onConnect: (pk: string) => void; }
 
 export default function WalletConnect({ onConnect }: WalletConnectProps) {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [step, setStep]       = useState<"idle" | "connecting" | "authenticating">("idle");
+  const [error, setError]     = useState<string | null>(null);
 
   const handleConnect = async () => {
     setLoading(true);
     setError(null);
+    setStep("connecting");
+
     const installed = await isFreighterInstalled();
     if (!installed) {
       window.open("https://freighter.app", "_blank");
       setLoading(false);
+      setStep("idle");
       return;
     }
-    const { publicKey, error: e } = await connectWallet();
+
+    const { publicKey, error: walletError } = await connectWallet();
+    if (walletError || !publicKey) {
+      setError(walletError || "Could not retrieve public key.");
+      setLoading(false);
+      setStep("idle");
+      return;
+    }
+
+    // SEP-0010: prove ownership of the wallet
+    setStep("authenticating");
+    const { error: authError } = await performSEP0010Auth(publicKey);
     setLoading(false);
-    if (e) { setError(e); return; }
-    if (publicKey) onConnect(publicKey);
+    setStep("idle");
+    if (authError) {
+      setError(authError);
+      return;
+    }
+
+    onConnect(publicKey);
   };
 
   return (
@@ -38,7 +58,9 @@ export default function WalletConnect({ onConnect }: WalletConnectProps) {
       </p>
       {error && <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{error}</div>}
       <button onClick={handleConnect} disabled={loading} className="btn-primary w-full flex items-center justify-center gap-2">
-        {loading ? <><Spinner />Connecting...</> : "Connect Freighter Wallet"}
+        {step === "connecting"     ? <><Spinner />Connecting...</> :
+         step === "authenticating" ? <><Spinner />Authenticating...</> :
+         "Connect Freighter Wallet"}
       </button>
       <p className="mt-3 text-xs text-amber-900">
         No wallet? <a href="https://freighter.app" target="_blank" rel="noopener noreferrer" className="text-market-400 hover:underline">Install Freighter →</a>

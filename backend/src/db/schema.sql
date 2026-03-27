@@ -70,3 +70,20 @@ CREATE TABLE IF NOT EXISTS escrows (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ─────────────────────────────────────────
+-- ratings
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ratings (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id          UUID        NOT NULL REFERENCES jobs(id),
+  rater_address   TEXT        NOT NULL REFERENCES profiles(public_key),
+  rated_address   TEXT        NOT NULL REFERENCES profiles(public_key),
+  stars           INTEGER     NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  review          TEXT        CHECK (char_length(review) <= 200),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (job_id, rater_address)               -- one rating per user per job
+);
+
+CREATE INDEX IF NOT EXISTS ratings_rated_address_idx ON ratings(rated_address);
+CREATE INDEX IF NOT EXISTS ratings_job_id_idx        ON ratings(job_id);

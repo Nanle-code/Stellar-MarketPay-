@@ -4,7 +4,7 @@
  */
 "use strict";
 
-import { query } from "../db/pool";
+const pool = require("../db/pool");
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -37,8 +37,14 @@ function rowToProfile(row) {
 async function getProfile(publicKey) {
   validatePublicKey(publicKey);
 
-  const { rows } = await query(
-    "SELECT * FROM profiles WHERE public_key = $1",
+  const { rows } = await pool.query(
+    `SELECT p.*,
+       ROUND(AVG(r.stars)::numeric, 2) AS avg_rating,
+       COUNT(r.id)::int                AS rating_count
+     FROM profiles p
+     LEFT JOIN ratings r ON r.rated_address = p.public_key
+     WHERE p.public_key = $1
+     GROUP BY p.public_key`,
     [publicKey]
   );
 
@@ -48,7 +54,10 @@ async function getProfile(publicKey) {
     throw e;
   }
 
-  return rowToProfile(rows[0]);
+  const profile = rowToProfile(rows[0]);
+  profile.rating      = rows[0].avg_rating !== null ? parseFloat(rows[0].avg_rating) : null;
+  profile.ratingCount = rows[0].rating_count;
+  return profile;
 }
 
 async function upsertProfile({ publicKey, displayName, bio, skills, role }) {
@@ -57,7 +66,7 @@ async function upsertProfile({ publicKey, displayName, bio, skills, role }) {
   const safeSkills = Array.isArray(skills) ? skills.slice(0, 15) : null;
 
   // INSERT … ON CONFLICT lets us handle create-or-update atomically.
-  const { rows } = await query(
+  const { rows } = await pool.query(
     `
     INSERT INTO profiles (public_key, display_name, bio, skills, role, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -81,4 +90,4 @@ async function upsertProfile({ publicKey, displayName, bio, skills, role }) {
   return rowToProfile(rows[0]);
 }
 
-export default { getProfile, upsertProfile };
+module.exports = { getProfile, upsertProfile };

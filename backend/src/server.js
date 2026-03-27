@@ -17,6 +17,7 @@ const profileRoutes     = require("./routes/profiles");
 const escrowRoutes      = require("./routes/escrow");
 const healthRoutes      = require("./routes/health");
 const authRoutes        = require("./routes/auth");
+const ratingRoutes      = require("./routes/ratings");
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -30,7 +31,8 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000").
 app.use(cors({
   origin: (origin, cb) => (!origin || allowedOrigins.includes(origin)) ? cb(null, true) : cb(new Error("CORS blocked")),
   methods: ["GET", "POST", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
 }));
 
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 150, standardHeaders: true, legacyHeaders: false }));
@@ -42,6 +44,7 @@ app.use("/api/jobs",          jobRoutes);
 app.use("/api/applications",  applicationRoutes);
 app.use("/api/profiles",      profileRoutes);
 app.use("/api/escrow",        escrowRoutes);
+app.use("/api/ratings",       ratingRoutes);
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `${req.method} ${req.path} not found` }));

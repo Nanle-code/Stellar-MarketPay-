@@ -6,10 +6,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import WalletConnect from "@/components/WalletConnect";
 import { fetchMyJobs, fetchMyApplications } from "@/lib/api";
-import { getXLMBalance } from "@/lib/stellar";
+import { getXLMBalance, getUSDCBalance } from "@/lib/stellar";
 import { formatXLM, shortenAddress, timeAgo, statusLabel, statusClass, copyToClipboard, exportJobsToCSV, exportApplicationsToCSV } from "@/utils/format";
 import type { Job, Application } from "@/utils/types";
 import EditProfileForm from "@/components/EditProfileForm";
+import SendPaymentForm from "@/components/SendPaymentForm";
 import clsx from "clsx";
 
 interface DashboardProps {
@@ -17,13 +18,14 @@ interface DashboardProps {
   onConnect: (pk: string) => void;
 }
 
-type Tab = "posted" | "applied" | "edit_profile";
+type Tab = "posted" | "applied" | "send" | "edit_profile";
 
 export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
   const [tab, setTab] = useState<Tab>("posted");
   const [myJobs, setMyJobs] = useState<Job[]>([]);
   const [myApplications, setMyApplications] = useState<Application[]>([]);
-  const [balance, setBalance] = useState<string | null>(null);
+  const [balance, setBalance]           = useState<string | null>(null);
+  const [usdcBalance, setUsdcBalance]   = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -47,8 +49,14 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
       fetchMyJobs(publicKey),
       fetchMyApplications(publicKey),
       getXLMBalance(publicKey),
+      getUSDCBalance(publicKey),
     ])
-      .then(([jobs, apps, bal]) => { setMyJobs(jobs); setMyApplications(apps); setBalance(bal); })
+      .then(([jobs, apps, bal, usdc]) => {
+        setMyJobs(jobs);
+        setMyApplications(apps);
+        setBalance(bal);
+        setUsdcBalance(usdc);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [publicKey]);
@@ -102,7 +110,7 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
       </div>
 
       {/* Wallet card */}
-      <div className="card mb-8 bg-gradient-to-br from-ink-800 to-ink-900 border-market-500/18 relative overflow-hidden">
+      <div className="card mb-4 bg-gradient-to-br from-ink-800 to-ink-900 border-market-500/18 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-40 h-40 bg-market-500/4 rounded-full blur-2xl pointer-events-none" />
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div>
@@ -137,16 +145,31 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
         )}
       </div>
 
+      {/* USDC balance card */}
+      {usdcBalance !== null && (
+        <div className="card mb-8 bg-gradient-to-br from-ink-800 to-ink-900 border-blue-500/18 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/4 rounded-full blur-2xl pointer-events-none" />
+          <div className="relative">
+            <p className="label mb-2">USDC Balance</p>
+            <p className="font-display text-4xl font-bold text-amber-100">
+              {parseFloat(usdcBalance).toLocaleString("en-US", { maximumFractionDigits: 4 })}
+              <span className="text-blue-400 text-2xl ml-2">USDC</span>
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex border-b border-market-500/10 mb-6 overflow-x-auto">
-        {(["posted", "applied", "edit_profile"] as Tab[]).map((t) => (
+        {(["posted", "applied", "send", "edit_profile"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={clsx(
               "px-6 py-3 text-sm font-medium transition-all border-b-2 -mb-px whitespace-nowrap",
               tab === t ? "border-market-400 text-market-300" : "border-transparent text-amber-700 hover:text-amber-400"
             )}>
-            {t === "posted" ? `Jobs Posted (${myJobs.length})` : 
-             t === "applied" ? `Applications (${myApplications.length})` : 
+            {t === "posted"      ? `Jobs Posted (${myJobs.length})` :
+             t === "applied"     ? `Applications (${myApplications.length})` :
+             t === "send"        ? "Send Payment" :
              "Edit Profile"}
           </button>
         ))}
@@ -234,6 +257,10 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
             ))}
           </div>
         )
+      ) : tab === "send" ? (
+        <div className="max-w-lg">
+          <SendPaymentForm fromPublicKey={publicKey} />
+        </div>
       ) : tab === "edit_profile" ? (
         <EditProfileForm publicKey={publicKey} />
       ) : null}
