@@ -7,7 +7,34 @@ import { isConnected, getPublicKey, signTransaction, requestAccess, isAllowed } 
 import { NETWORK_PASSPHRASE } from "./stellar";
 import { fetchAuthChallenge, verifyAuthChallenge, setJwtToken } from "./api";
 
+type FreighterWindowApi = {
+  isConnected?: () => Promise<boolean | { isConnected?: boolean }>;
+  isAllowed?: () => Promise<boolean | { isAllowed?: boolean }>;
+  requestAccess?: () => Promise<unknown>;
+  getPublicKey?: () => Promise<string | { publicKey?: string }>;
+  signTransaction?: (transactionXDR: string, opts: Record<string, unknown>) => Promise<string | { signedTransaction?: string }>;
+};
+
+function getWindowFreighter(): FreighterWindowApi | null {
+  if (typeof window === "undefined") return null;
+  const w = window as Window & { freighter?: FreighterWindowApi };
+  return w.freighter ?? null;
+}
+
 export async function isFreighterInstalled(): Promise<boolean> {
+  const freighter = getWindowFreighter();
+  if (freighter?.isConnected) {
+    try {
+      const result = await freighter.isConnected();
+      if (typeof result === "object" && result !== null && "isConnected" in result) {
+        return Boolean((result as { isConnected?: boolean }).isConnected);
+      }
+      return Boolean(result);
+    } catch {
+      return false;
+    }
+  }
+
   try {
     const result = await isConnected();
     // Handle both object and boolean return types from Freighter API
@@ -24,9 +51,14 @@ export async function connectWallet(): Promise<{ publicKey: string | null; error
   const installed = await isFreighterInstalled();
   if (!installed) return { publicKey: null, error: "Freighter wallet not installed. Visit https://freighter.app" };
 
+  const freighter = getWindowFreighter();
   try {
-    await requestAccess();
-    const result = await getPublicKey();
+    if (freighter?.requestAccess) {
+      await freighter.requestAccess();
+    } else {
+      await requestAccess();
+    }
+    const result = freighter?.getPublicKey ? await freighter.getPublicKey() : await getPublicKey();
     const publicKey = typeof result === "object" && result !== null && "publicKey" in result
       ? (result as any).publicKey
       : result as string;
@@ -39,13 +71,14 @@ export async function connectWallet(): Promise<{ publicKey: string | null; error
 }
 
 export async function getConnectedPublicKey(): Promise<string | null> {
+  const freighter = getWindowFreighter();
   try {
-    const allowed = await isAllowed();
+    const allowed = freighter?.isAllowed ? await freighter.isAllowed() : await isAllowed();
     const isAllowedBool = typeof allowed === "object" && allowed !== null && "isAllowed" in allowed
       ? (allowed as any).isAllowed
       : Boolean(allowed);
     if (!isAllowedBool) return null;
-    const result = await getPublicKey();
+    const result = freighter?.getPublicKey ? await freighter.getPublicKey() : await getPublicKey();
     const pk = typeof result === "object" && result !== null && "publicKey" in result
       ? (result as any).publicKey
       : result as string;
@@ -78,9 +111,12 @@ export async function performSEP0010Auth(
 }
 
 export async function signTransactionWithWallet(transactionXDR: string): Promise<{ signedXDR: string | null; error: string | null }> {
+  const freighter = getWindowFreighter();
   try {
     const network = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "MAINNET" : "TESTNET";
-    const result = await signTransaction(transactionXDR, { networkPassphrase: NETWORK_PASSPHRASE, network });
+    const result = freighter?.signTransaction
+      ? await freighter.signTransaction(transactionXDR, { networkPassphrase: NETWORK_PASSPHRASE, network })
+      : await signTransaction(transactionXDR, { networkPassphrase: NETWORK_PASSPHRASE, network });
     const signedXDR = typeof result === "object" && result !== null && "signedTransaction" in result
       ? (result as any).signedTransaction
       : result as string;
