@@ -72,6 +72,7 @@ function rowToJob(row) {
     title:             row.title,
     description:       row.description,
     budget:            row.budget,
+    currency:          row.currency || 'XLM',
     category:          row.category,
     skills:            row.skills,
     status:            row.status,
@@ -79,6 +80,9 @@ function rowToJob(row) {
     freelancerAddress: row.freelancer_address,
     escrowContractId:  row.escrow_contract_id,
     applicantCount:    row.applicant_count,
+    shareCount:        row.share_count || 0,
+    boosted:           row.boosted || false,
+    boostedUntil:      row.boosted_until,
     deadline:          row.deadline,
     timezone:          row.timezone,
     createdAt:         row.created_at,
@@ -90,7 +94,7 @@ function rowToJob(row) {
 
 /**
  * Create a new job listing.
- * Note: the client's profile row must already exist (FK constraint).
+ * Note: client's profile row must already exist (FK constraint).
  */
 async function createJob({ title, description, budget, category, skills, deadline, timezone, clientAddress }) {
   validatePublicKey(clientAddress);
@@ -103,6 +107,9 @@ async function createJob({ title, description, budget, category, skills, deadlin
   }
   if (!budget || isNaN(parseFloat(budget)) || parseFloat(budget) <= 0) {
     const e = new Error("Budget must be a positive number"); e.status = 400; throw e;
+  }
+  if (!currency || !['XLM', 'USDC'].includes(currency)) {
+    const e = new Error("Currency must be XLM or USDC"); e.status = 400; throw e;
   }
   if (!VALID_CATEGORIES.includes(category)) {
     const e = new Error("Invalid category"); e.status = 400; throw e;
@@ -121,6 +128,7 @@ async function createJob({ title, description, budget, category, skills, deadlin
       title.trim(),
       description.trim(),
       parseFloat(budget).toFixed(7),
+      currency,
       category,
       safeSkills,
       clientAddress,
@@ -196,7 +204,9 @@ async function listJobs({ category, status = "open", limit = 50, search, cursor,
   params.push(safeLimit + 1);
 
   const { rows } = await query(
-    `SELECT * FROM jobs ${where} ORDER BY created_at DESC, id DESC LIMIT $${params.length}`,
+    `SELECT * FROM jobs ${where} ORDER BY 
+       CASE WHEN boosted = true AND (boosted_until IS NULL OR boosted_until > NOW()) THEN 0 ELSE 1 END,
+       created_at DESC, id DESC LIMIT $${params.length}`,
     params
   );
 
@@ -285,6 +295,41 @@ async function deleteJob(jobId) {
   }
 }
 
+async function boostJob(jobId, txHash) {
+  // Verify job exists
+  const { rows } = await query("SELECT * FROM jobs WHERE id = $1", [jobId]);
+  if (!rows.length) {
+    const e = new Error("Job not found"); e.status = 404; throw e;
+  }
+
+  // Set boost for 7 days from now
+  const boostedUntil = new Date();
+  boostedUntil.setDate(boostedUntil.getDate() + 7);
+
+  const { rows: updateRows } = await query(
+    `UPDATE jobs 
+     SET boosted = true, boosted_until = $1, updated_at = NOW() 
+     WHERE id = $2 
+     RETURNING *`,
+    [boostedUntil.toISOString(), jobId]
+  );
+
+  return rowToJob(updateRows[0]);
+}
+
+async function incrementShareCount(jobId) {
+  const { rows } = await query(
+    "UPDATE jobs SET share_count = COALESCE(share_count, 0) + 1, updated_at = NOW() WHERE id = $1 RETURNING *",
+    [jobId]
+  );
+  
+  if (!rows.length) {
+    const e = new Error("Job not found"); e.status = 404; throw e;
+  }
+
+  return rowToJob(rows[0]);
+}
+
 export default {
   createJob,
   getJob,
@@ -294,4 +339,6 @@ export default {
   assignFreelancer,
   updateJobEscrowId,
   deleteJob,
+  boostJob,
+  incrementShareCount,
 };
