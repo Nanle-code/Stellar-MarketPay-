@@ -3,7 +3,7 @@
  * Form for clients to post a new job with XLM budget.
  * Issue #21: Integrates Soroban escrow contract into job creation flow.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createJob, updateJobEscrowId, deleteJob } from "@/lib/api";
 import { buildCreateEscrowTransaction, submitSorobanTransaction } from "@/lib/stellar";
 import { signTransactionWithWallet } from "@/lib/wallet";
@@ -11,10 +11,39 @@ import { JOB_CATEGORIES, SKILL_SUGGESTIONS } from "@/utils/format";
 import { useRouter } from "next/router";
 import clsx from "clsx";
 import { useToast } from "@/components/Toast";
+import type { Currency } from "@/utils/types";
 
 interface PostJobFormProps { publicKey: string; }
 
 type Step = "idle" | "posting" | "locking" | "done" | "error";
+type FormState = {
+  title: string;
+  description: string;
+  budget: string;
+  category: string;
+  skillInput: string;
+  deadline: string;
+};
+
+type JobTemplate = {
+  name: string;
+  title: string;
+  description: string;
+  budget: string;
+  category: string;
+  skills: string[];
+  deadline: string;
+};
+
+const JOB_TEMPLATES_STORAGE_KEY = "stellar-marketpay-job-templates";
+const emptyForm: FormState = {
+  title: "",
+  description: "",
+  budget: "",
+  category: "",
+  skillInput: "",
+  deadline: "",
+};
 
 export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const router = useRouter();
@@ -30,7 +59,23 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
 
-  const set = (key: string, val: string) => setForm((f) => ({ ...f, [key]: val }));
+  const set = (key: keyof FormState, val: string) => setForm((f) => ({ ...f, [key]: val }));
+
+  useEffect(() => {
+    setTemplates(readTemplates());
+  }, []);
+
+  const persistTemplates = (nextTemplates: JobTemplate[]) => {
+    setTemplates(nextTemplates);
+
+    if (typeof window === "undefined") return;
+
+    try {
+      window.localStorage.setItem(JOB_TEMPLATES_STORAGE_KEY, JSON.stringify(nextTemplates));
+    } catch {
+      toast.error("Unable to save job templates on this device.");
+    }
+  };
 
   // Filter suggestions based on input
   const filteredSuggestions = form.skillInput.trim().length > 0
@@ -103,6 +148,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         title: form.title.trim(),
         description: form.description.trim(),
         budget: parseFloat(form.budget).toFixed(7),
+        currency: form.currency,
         category: form.category,
         skills,
         deadline: form.deadline || undefined,
@@ -119,7 +165,8 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         jobId: job.id,
         // Use client as placeholder freelancer until one is hired
         freelancerAddress: publicKey,
-        budgetXLM: parseFloat(form.budget).toFixed(7),
+        budget: parseFloat(form.budget).toFixed(7),
+        currency: form.currency,
       });
 
       const { signedXDR, error: signError } = await signTransactionWithWallet(unsignedTx.toXDR());
@@ -157,6 +204,46 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
       <p className="text-amber-800 text-sm mb-8">Fill in the details and set your XLM budget. Funds will be locked in escrow when a freelancer is hired.</p>
 
       <div className="space-y-6">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div>
+            <label className="label">Load Template</label>
+            <select
+              value={selectedTemplateName}
+              onChange={(e) => handleLoadTemplate(e.target.value)}
+              className="input-field appearance-none cursor-pointer"
+            >
+              <option value="">Select a saved template...</option>
+              {templates.map((template) => (
+                <option key={template.name} value={template.name}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={handleDeleteTemplate}
+            disabled={!selectedTemplateName}
+            className="btn-secondary px-4 py-3 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Delete Template
+          </button>
+        </div>
+
+        {showDeleteConfirmation && selectedTemplateName && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 space-y-3">
+            <p className="text-sm text-red-300">Delete template &quot;{selectedTemplateName}&quot;?</p>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={handleConfirmDelete} className="btn-secondary px-4 py-2 text-sm">
+                Confirm Delete
+              </button>
+              <button type="button" onClick={handleCancelDelete} className="btn-secondary px-4 py-2 text-sm">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Title */}
         <div>
           <label className="label">Job Title</label>
@@ -234,8 +321,8 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
           )}
         </div>
 
-        {/* Category + Budget row */}
-        <div className="grid sm:grid-cols-2 gap-4">
+        {/* Category + Budget + Currency row */}
+        <div className="grid sm:grid-cols-3 gap-4">
           <div>
             <label className="label">Category</label>
             <select value={form.category} onChange={(e) => set("category", e.target.value)}
@@ -245,10 +332,19 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
             </select>
           </div>
           <div>
-            <label className="label">Budget (XLM)</label>
+            <label className="label">Budget</label>
             <input type="number" value={form.budget} onChange={(e) => set("budget", e.target.value)}
               placeholder="e.g. 500" min="1" step="1" className="input-field" />
             <p className="mt-1 text-xs text-amber-800/50">Will be locked in escrow on hire</p>
+          </div>
+          <div>
+            <label className="label">Currency</label>
+            <select value={form.currency} onChange={(e) => set("currency", e.target.value as Currency)}
+              className="input-field appearance-none cursor-pointer">
+              <option value="XLM">XLM (Stellar Lumens)</option>
+              <option value="USDC">USDC (USD Coin)</option>
+            </select>
+            <p className="mt-1 text-xs text-amber-800/50">Payment currency for this job</p>
           </div>
         </div>
 
@@ -420,6 +516,49 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
           <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{error}</div>
         )}
 
+        <div className="space-y-3 rounded-xl border border-market-500/20 bg-market-900/30 p-4">
+          <label className="label">Template Name</label>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <input
+              type="text"
+              value={templateNameInput}
+              onChange={(e) => {
+                setTemplateNameInput(e.target.value);
+                setTemplateError(null);
+                setPendingOverwriteTemplate(null);
+                setShowDeleteConfirmation(false);
+              }}
+              placeholder="e.g. Ongoing smart contract audit brief"
+              className={clsx("input-field flex-1", templateError && "border-red-500/40")}
+            />
+            <button
+              type="button"
+              onClick={handleSaveTemplate}
+              className="btn-secondary px-4 py-3 text-sm"
+            >
+              Save as Template
+            </button>
+          </div>
+          {templateError && (
+            <p className="text-xs text-red-400">{templateError}</p>
+          )}
+          {pendingOverwriteTemplate && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 space-y-3">
+              <p className="text-sm text-amber-100">
+                A template named &quot;{pendingOverwriteTemplate.name}&quot; already exists. Overwrite it?
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={handleConfirmOverwrite} className="btn-secondary px-4 py-2 text-sm">
+                  Overwrite Template
+                </button>
+                <button type="button" onClick={handleCancelOverwrite} className="btn-secondary px-4 py-2 text-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <button
           onClick={handleSubmit}
           disabled={
@@ -437,7 +576,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         </button>
 
         <p className="text-center text-xs text-amber-800/60">
-          By posting, the budget ({form.budget ? `${form.budget} XLM` : "—"}) will be held in a Soroban escrow contract and released when you approve the completed work.
+          By posting, budget ({form.budget ? `${form.budget} ${form.currency}` : "—"}) will be held in a Soroban escrow contract and released when you approve of completed work.
         </p>
       </div>
     </div>
@@ -462,4 +601,34 @@ function StepDot({ status }: { status: "idle" | "active" | "done" }) {
     );
   }
   return <span className="w-5 h-5 rounded-full border border-amber-800/30 bg-market-900/40" />;
+}
+
+function readTemplates(): JobTemplate[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const rawTemplates = window.localStorage.getItem(JOB_TEMPLATES_STORAGE_KEY);
+    if (!rawTemplates) return [];
+
+    const parsedTemplates = JSON.parse(rawTemplates);
+    if (!Array.isArray(parsedTemplates)) return [];
+
+    return parsedTemplates.filter(isJobTemplate);
+  } catch {
+    return [];
+  }
+}
+
+function isJobTemplate(value: unknown): value is JobTemplate {
+  if (!value || typeof value !== "object") return false;
+
+  const template = value as Partial<JobTemplate>;
+  return typeof template.name === "string" &&
+    typeof template.title === "string" &&
+    typeof template.description === "string" &&
+    typeof template.budget === "string" &&
+    typeof template.category === "string" &&
+    Array.isArray(template.skills) &&
+    template.skills.every((skill) => typeof skill === "string") &&
+    typeof template.deadline === "string";
 }
