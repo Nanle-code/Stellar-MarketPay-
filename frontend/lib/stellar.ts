@@ -339,3 +339,29 @@ export function accountUrl(address: string): string {
   const net = NETWORK === "mainnet" ? "public" : "testnet";
   return `https://stellar.expert/explorer/${net}/account/${address}`;
 }
+
+/**
+ * Streams transactions for a given account using Horizon SSE.
+ * @param publicKey The account to watch.
+ * @param onTransaction Callback triggered when a new transaction is detected.
+ * @returns A function to close the stream.
+ */
+export function streamAccountTransactions(
+  publicKey: string,
+  onTransaction: (tx: Horizon.ServerApi.TransactionRecord) => void
+): () => void {
+  const closeStream = server
+    .transactions()
+    .forAccount(publicKey)
+    .cursor("now")
+    .stream({
+      onmessage: (tx) => {
+        onTransaction(tx);
+      },
+      onerror: (error) => {
+        console.error("Horizon stream error:", error);
+      },
+    });
+
+  return closeStream;
+}
