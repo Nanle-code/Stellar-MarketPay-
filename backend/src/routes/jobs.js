@@ -13,15 +13,7 @@ const generalJobRateLimiter = createRateLimiter(30, 1); // 100 requests per minu
 
 
 const jobService = require("../services/jobService");
-const { createJob, getJob, listJobs, listJobsByClient, updateJobEscrowId, deleteJob, boostJob, incrementShareCount, raiseDispute, resolveDispute } = jobService.default || jobService;
-const { verifyJWT } = require("../middleware/auth");
-
-// Rate limiters for different job operations
-const generalJobRateLimiter = createRateLimiter(100, 1); // 100 requests per minute
-const jobCreationRateLimiter = createRateLimiter(10, 1); // 10 job creations per minute
-
-const jobService = require("../services/jobService");
-const { createJob, getJob, listJobs, listJobsByClient, updateJobEscrowId, deleteJob, boostJob, incrementShareCount, getRecommendedJobs } = jobService.default || jobService;
+const { createJob, getJob, listJobs, listJobsByClient, updateJobEscrowId, deleteJob, boostJob, incrementShareCount, raiseDispute, resolveDispute, getRecommendedJobs } = jobService.default || jobService;
 const { verifyJWT } = require("../middleware/auth");
 
 // Feed Helpers
@@ -48,6 +40,34 @@ function truncateDescription(description, maxLength = 200) {
   if (!description) return "";
   if (description.length <= maxLength) return description;
   return description.substring(0, maxLength - 3) + "...";
+}
+
+// Apply feed-only query filters (skills, budget range) to an already-fetched job list.
+function filterFeedJobs(jobs, { skills, min_budget, max_budget } = {}) {
+  let filtered = jobs;
+  const wanted = String(skills || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (wanted.length > 0) {
+    filtered = filtered.filter((job) =>
+      (job.skills || []).some((s) => wanted.includes(String(s).toLowerCase()))
+    );
+  }
+  const min = parseFloat(min_budget);
+  if (!isNaN(min)) filtered = filtered.filter((job) => parseFloat(job.budget) >= min);
+  const max = parseFloat(max_budget);
+  if (!isNaN(max)) filtered = filtered.filter((job) => parseFloat(job.budget) <= max);
+  return filtered;
+}
+
+// Build a feed title suffix that reflects the active filters.
+function feedTitleSuffix({ category, skills } = {}) {
+  const parts = [];
+  if (category) parts.push(`in ${category}`);
+  const skillList = String(skills || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (skillList.length > 0) parts.push(`matching ${skillList.join(", ")}`);
+  return parts.length ? ` — ${parts.join(" ")}` : "";
 }
 
 function normalizeAddress(address) {
@@ -398,17 +418,20 @@ router.post("/:id/resolve", verifyJWT, generalJobRateLimiter, async (req, res, n
 // GET /api/jobs/feed.rss — RSS 2.0 feed
 router.get("/feed.rss", generalJobRateLimiter, async (req, res, next) => {
   try {
-    const { category } = req.query;
-    const result = await listJobs({ category, status: "open", limit: 20 });
-    const jobs = result.jobs;
+    const { category, skills, min_budget, max_budget } = req.query;
+    const result = await listJobs({ category, status: "open", limit: 50 });
+    const jobs = filterFeedJobs(result.jobs, { skills, min_budget, max_budget }).slice(0, 20);
     const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-    const feedUrl = `${baseUrl}/api/jobs/feed.rss${category ? `?category=${encodeURIComponent(category)}` : ""}`;
+    const query = new URLSearchParams(
+      Object.entries({ category, skills, min_budget, max_budget }).filter(([, v]) => v)
+    ).toString();
+    const feedUrl = `${baseUrl}/api/jobs/feed.rss${query ? `?${query}` : ""}`;
     const lastBuildDate = jobs.length > 0 ? formatDateRss(new Date(jobs[0].createdAt)) : formatDateRss(new Date());
 
     let rss = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
-    <title>Stellar MarketPay — Job Listings</title>
+    <title>${escapeXml(`Stellar MarketPay — Job Listings${feedTitleSuffix({ category, skills })}`)}</title>
     <description>Latest freelance job opportunities on Stellar MarketPay</description>
     <link>${baseUrl}/jobs</link>
     <atom:link href="${feedUrl}" rel="self" type="application/rss+xml" />
@@ -427,6 +450,8 @@ router.get("/feed.rss", generalJobRateLimiter, async (req, res, next) => {
       <guid isPermaLink="true">${jobUrl}</guid>
       <pubDate>${pubDate}</pubDate>
       <category>${escapeXml(job.category)}</category>
+      <dc:creator>${escapeXml(job.clientDisplayName || job.clientAddress || "Anonymous")}</dc:creator>
+      <skills>${escapeXml((job.skills || []).join(", "))}</skills>
       <budget>${escapeXml(job.budget.toString())} XLM</budget>
     </item>
 `;
@@ -443,16 +468,19 @@ router.get("/feed.rss", generalJobRateLimiter, async (req, res, next) => {
 // GET /api/jobs/feed.atom
 router.get("/feed.atom", generalJobRateLimiter, async (req, res, next) => {
   try {
-    const { category } = req.query;
-    const result = await listJobs({ category, status: "open", limit: 20 });
-    const jobs = result.jobs;
+    const { category, skills, min_budget, max_budget } = req.query;
+    const result = await listJobs({ category, status: "open", limit: 50 });
+    const jobs = filterFeedJobs(result.jobs, { skills, min_budget, max_budget }).slice(0, 20);
     const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-    const feedUrl = `${baseUrl}/api/jobs/feed.atom${category ? `?category=${encodeURIComponent(category)}` : ""}`;
+    const query = new URLSearchParams(
+      Object.entries({ category, skills, min_budget, max_budget }).filter(([, v]) => v)
+    ).toString();
+    const feedUrl = `${baseUrl}/api/jobs/feed.atom${query ? `?${query}` : ""}`;
     const updatedDate = jobs.length > 0 ? formatDateAtom(new Date(jobs[0].createdAt)) : formatDateAtom(new Date());
 
     let atom = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
-  <title>Stellar MarketPay — Job Listings</title>
+  <title>${escapeXml(`Stellar MarketPay — Job Listings${feedTitleSuffix({ category, skills })}`)}</title>
   <subtitle>Latest freelance job opportunities on Stellar MarketPay</subtitle>
   <link href="${baseUrl}/jobs" rel="alternate" type="text/html" />
   <link href="${feedUrl}" rel="self" type="application/atom+xml" />
@@ -471,7 +499,9 @@ router.get("/feed.atom", generalJobRateLimiter, async (req, res, next) => {
     <id>${jobUrl}</id>
     <published>${published}</published>
     <updated>${published}</updated>
+    <author><name>${escapeXml(job.clientDisplayName || job.clientAddress || "Anonymous")}</name></author>
     <category term="${escapeXml(job.category)}" />
+    <skills>${escapeXml((job.skills || []).join(", "))}</skills>
     <budget>${escapeXml(job.budget.toString())} XLM</budget>
   </entry>
 `;

@@ -2,7 +2,7 @@
  * pages/dashboard.tsx
  * User dashboard — shows posted jobs, applications, and wallet balance.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import WalletConnect from "@/components/WalletConnect";
@@ -77,6 +77,39 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
   const [templateName, setTemplateName] = useState("");
   const [templateContent, setTemplateContent] = useState("");
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const templateEditorRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Wrap/insert Markdown syntax around the current selection in the template editor.
+  const applyTemplateMarkdown = (syntax: "bold" | "italic" | "list" | "code" | "link") => {
+    const el = templateEditorRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const selected = templateContent.slice(start, end);
+    let next: string;
+    let cursor: number;
+    if (syntax === "list") {
+      const block = (selected || "item").split("\n").map((line) => `- ${line}`).join("\n");
+      next = templateContent.slice(0, start) + block + templateContent.slice(end);
+      cursor = start + block.length;
+    } else {
+      const wrappers: Record<string, [string, string]> = {
+        bold: ["**", "**"],
+        italic: ["_", "_"],
+        code: ["`", "`"],
+        link: ["[", "](url)"],
+      };
+      const [open, close] = wrappers[syntax];
+      const inner = selected || "text";
+      next = templateContent.slice(0, start) + open + inner + close + templateContent.slice(end);
+      cursor = start + open.length + inner.length + close.length;
+    }
+    setTemplateContent(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(cursor, cursor);
+    });
+  };
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -403,7 +436,20 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
         <div className="space-y-4">
           <div className="card space-y-3">
             <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} className="input-field" placeholder="Template name" />
-            <textarea value={templateContent} onChange={(e) => setTemplateContent(e.target.value)} className="textarea-field" rows={5} placeholder="Template proposal content" />
+            <div className="flex flex-wrap gap-2">
+              {(["bold", "italic", "list", "code", "link"] as const).map((syntax) => (
+                <button
+                  key={syntax}
+                  type="button"
+                  className="btn-secondary text-xs px-2 py-1 capitalize"
+                  onClick={() => applyTemplateMarkdown(syntax)}
+                >
+                  {syntax}
+                </button>
+              ))}
+            </div>
+            <textarea ref={templateEditorRef} value={templateContent} onChange={(e) => setTemplateContent(e.target.value)} className="textarea-field font-mono" rows={5} placeholder="Template proposal content (Markdown supported)" />
+            <p className="text-xs text-amber-700">Markdown supported — use the buttons above to format.</p>
             <button className="btn-primary text-sm" onClick={async () => {
               if (!templateName.trim() || !templateContent.trim()) return;
               if (editingTemplateId) {
