@@ -2,44 +2,17 @@
  * pages/dashboard.tsx
  * User dashboard — shows posted jobs, applications, and wallet balance.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import WalletConnect from "@/components/WalletConnect";
-import {
-  fetchMyJobs,
-  fetchMyApplications,
-  fetchProfile,
-  fetchProposalTemplates,
-  createProposalTemplate,
-  updateProposalTemplate,
-  deleteProposalTemplate,
-  fetchPriceAlertPreference,
-  upsertPriceAlertPreference,
-  fetchClientSpendingAnalytics,
-  extendJobExpiry,
-  fetchMyInvitations,
-  declineInvitation,
-  acceptInvitation,
-  bulkCancelJobs,
-  bulkExtendJobs,
-  bulkBoostJobs,
-  fetchSavedSearches,
-  updateSavedSearch,
-  deleteSavedSearch,
-  type SavedSearch,
-} from "@/lib/api";
+import { fetchMyJobs, fetchMyApplications, fetchApplications } from "@/lib/api";
+import { getXLMBalance, getUSDCBalance, streamAccountTransactions } from "@/lib/stellar";
 import { formatXLM, shortenAddress, timeAgo, statusLabel, statusClass, copyToClipboard, exportJobsToCSV, exportApplicationsToCSV } from "@/utils/format";
 import type { Job, Application, ClientSpendingAnalytics, JobInvitation } from "@/utils/types";
 import EditProfileForm from "@/components/EditProfileForm";
 import SendPaymentForm from "@/components/SendPaymentForm";
-import BuyXLMModal from "@/components/BuyXLMModal";
-import WithdrawToBankModal, {
-  loadWithdrawHistory,
-  type WithdrawHistoryEntry,
-} from "@/components/WithdrawToBankModal";
 import { useToast } from "@/components/Toast";
-import StateMessage from "@/components/StateMessage";
 import clsx from "clsx";
 import dynamic from "next/dynamic";
 import JobTimeline from "@/components/JobTimeline";
@@ -105,144 +78,47 @@ async function fetchBalances(
   };
 }
 
+function syncDashboardNavBadge(count: number) {
+  if (typeof document === "undefined") return;
+
+  const navLink = document.querySelector('a[href="/dashboard"]');
+  if (!(navLink instanceof HTMLElement)) return;
+
+  navLink.classList.add("relative");
+
+  let badge = navLink.querySelector("[data-dashboard-badge]");
+  if (count <= 0) {
+    badge?.remove();
+    return;
+  }
+
+  if (!(badge instanceof HTMLSpanElement)) {
+    badge = document.createElement("span");
+    badge.setAttribute("data-dashboard-badge", "true");
+    badge.className = "absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-market-400 text-ink-900 text-[10px] font-bold flex items-center justify-center shadow-[0_0_18px_rgba(251,191,36,0.45)]";
+    navLink.appendChild(badge);
+  }
+
+  badge.textContent = count > 9 ? "9+" : String(count);
+}
+
 export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
-  const router = useRouter();
+  const toast = useToast();
   const [tab, setTab] = useState<Tab>("posted");
   const [canViewSpending, setCanViewSpending] = useState(true);
   const [myJobs, setMyJobs] = useState<Job[]>([]);
   const [myApplications, setMyApplications] = useState<Application[]>([]);
-  const [myInvitations, setMyInvitations] = useState<JobInvitation[]>([]);
-  const [acceptingInvite, setAcceptingInvite] = useState<string | null>(null);
-  const [balance, setBalance] = useState<string | null>(null);
-  const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
+  const [balance, setBalance]           = useState<string | null>(null);
+  const [usdcBalance, setUsdcBalance]   = useState<string | null>(null);
+  const [notificationCount, setNotificationCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const [templates, setTemplates] = useState<
-    { id: string; name: string; content: string }[]
-  >([]);
-  const [templateName, setTemplateName] = useState("");
-  const [templateContent, setTemplateContent] = useState("");
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
-    null,
-  );
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [alertEmail, setAlertEmail] = useState("");
-  const [showBuyXLM, setShowBuyXLM] = useState(false);
-  const [showWithdraw, setShowWithdraw] = useState(false);
-  const [alertMatchesDismissed, setAlertMatchesDismissed] = useState(false);
-  const [withdrawHistory, setWithdrawHistory] = useState<
-    WithdrawHistoryEntry[]
-  >([]);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [extendingJob, setExtendingJob] = useState<string | null>(null);
-  const [extendModalJob, setExtendModalJob] = useState<Job | null>(null);
-  const [spendingAnalytics, setSpendingAnalytics] =
-    useState<ClientSpendingAnalytics | null>(null);
-  const [spendingLoading, setSpendingLoading] = useState(false);
-  const { success } = useToast();
-  const { xlmPriceUsd } = usePriceContext();
-  const { progress, checklistItems } = useOnboarding(publicKey);
-
-  // ── Saved searches state (Issue #284) ──────────────────────────────────────
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
-  const [savedSearchesLoading, setSavedSearchesLoading] = useState(false);
-
-  const handleResetContractMock = async () => {
-    if (!IS_CONTRACT_MOCK_DEV_MODE) return;
-
-    const { clearMockData } = await import("@/lib/contractMock");
-    clearMockData();
-    success("Mock contract data reset");
-  };
-
-  // ── Bulk selection state ──────────────────────────────────────────────────
-  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
-  const [bulkLoading, setBulkLoading] = useState(false);
-
-  const toggleJobSelection = (jobId: string) => {
-    setSelectedJobIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    const selectableIds = myJobs
-      .filter((j) => j.status === "open")
-      .map((j) => j.id);
-    if (selectableIds.every((id) => selectedJobIds.has(id))) {
-      setSelectedJobIds(new Set());
-    } else {
-      setSelectedJobIds(new Set(selectableIds));
-    }
-  };
-
-  const handleBulkCancel = async () => {
-    setBulkLoading(true);
-    try {
-      const res = await bulkCancelJobs(Array.from(selectedJobIds));
-      const cancelledIds = new Set(
-        res.results.filter((r) => r.success).map((r) => r.id),
-      );
-      setMyJobs((prev) =>
-        prev.map((j) =>
-          cancelledIds.has(j.id) ? { ...j, status: "cancelled" as const } : j,
-        ),
-      );
-      setSelectedJobIds(new Set());
-      return res;
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
-  const handleBulkExtend = async () => {
-    setBulkLoading(true);
-    try {
-      const res = await bulkExtendJobs(Array.from(selectedJobIds), 30);
-      setSelectedJobIds(new Set());
-      return res;
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
-  const handleBulkBoost = async () => {
-    setBulkLoading(true);
-    try {
-      const res = await bulkBoostJobs(
-        Array.from(selectedJobIds),
-        `bulk-boost-${Date.now()}`,
-      );
-      const boostedIds = new Set(
-        res.results.filter((r) => r.success).map((r) => r.id),
-      );
-      setMyJobs((prev) =>
-        prev.map((j) =>
-          boostedIds.has(j.id)
-            ? {
-                ...j,
-                boosted: true,
-                boostedUntil: res.results.find((r) => r.id === j.id)
-                  ?.boostedUntil,
-              }
-            : j,
-        ),
-      );
-      setSelectedJobIds(new Set());
-      return res;
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
-  const isRepostable = (status: Job["status"]) => status === "cancelled";
-  const alertMatches: Job[] = [];
+  const latestJobsRef = useRef<Job[]>([]);
+  const latestApplicationsRef = useRef<Application[]>([]);
+  const latestJobApplicationsRef = useRef<Map<string, Application[]>>(new Map());
+  const seenNotificationsRef = useRef<Set<string>>(new Set());
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const handleCopy = async () => {
     if (!publicKey) return;
@@ -257,57 +133,131 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
     }
   };
 
-  const handleRepost = (job: Job) => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      REPOST_JOB_PREFILL_STORAGE_KEY,
-      JSON.stringify({
-        title: job.title,
-        description: job.description,
-        budget: job.budget,
-        category: job.category,
-        freelancer: job.freelancerAddress || "",
-      }),
+  const loadDashboardData = useCallback(async () => {
+    if (!publicKey) return null;
+
+    const [jobs, apps, bal, usdc] = await Promise.all([
+      fetchMyJobs(publicKey),
+      fetchMyApplications(publicKey),
+      getXLMBalance(publicKey),
+      getUSDCBalance(publicKey),
+    ]);
+
+    const jobApplications = new Map<string, Application[]>();
+    const applicationLists = await Promise.all(
+      jobs.map((job) =>
+        fetchApplications(job.id).catch(() => [])
+      )
     );
-    router.push("/post-job");
-  };
 
-  const refreshBalances = () => {
+    jobs.forEach((job, index) => {
+      jobApplications.set(job.id, applicationLists[index]);
+    });
+
+    setMyJobs(jobs);
+    setMyApplications(apps);
+    setBalance(bal);
+    setUsdcBalance(usdc);
+    latestJobsRef.current = jobs;
+    latestApplicationsRef.current = apps;
+    latestJobApplicationsRef.current = jobApplications;
+
+    return { jobs, apps, jobApplications };
+  }, [publicKey]);
+
+  const pushNotification = useCallback(
+    (key: string, message: string, variant: "success" | "info" = "info") => {
+      if (seenNotificationsRef.current.has(key)) return;
+
+      seenNotificationsRef.current.add(key);
+      setNotificationCount((count) => count + 1);
+      if (variant === "success") {
+        toast.success(message);
+        return;
+      }
+      toast.info(message);
+    },
+    [toast]
+  );
+
+  const refreshNotifications = useCallback(async () => {
     if (!publicKey) return;
-    fetchBalances(publicKey)
-      .then(({ xlm, usdc }) => {
-        setBalance(xlm);
-        setUsdcBalance(usdc);
-      })
-      .catch(() => {});
-  };
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
-  const handleExtendJob = async (jobId: string) => {
-    const job = myJobs.find((j) => j.id === jobId);
-    if (job) setExtendModalJob(job);
-  };
+    refreshPromiseRef.current = (async () => {
+      const previousApplications = latestApplicationsRef.current;
+      const previousJobApplications = latestJobApplicationsRef.current;
+      const nextData = await loadDashboardData();
+      if (!nextData) return;
 
-  const handleJobExtended = (updated: Job) => {
-    setMyJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
-  };
+      const { jobs, apps, jobApplications } = nextData;
+
+      for (const job of jobs) {
+        const previousIds = new Set(
+          (previousJobApplications.get(job.id) ?? []).map((application) => application.id)
+        );
+
+        for (const application of jobApplications.get(job.id) ?? []) {
+          if (!previousIds.has(application.id)) {
+            pushNotification(
+              `job:${job.id}:application:${application.id}`,
+              `New application received for: ${job.title}`,
+              "success"
+            );
+          }
+        }
+      }
+
+      const previousStatuses = new Map(
+        previousApplications.map((application) => [application.id, application.status])
+      );
+
+      for (const application of apps) {
+        const previousStatus = previousStatuses.get(application.id);
+        if (previousStatus && previousStatus !== application.status) {
+          pushNotification(
+            `application:${application.id}:status:${application.status}`,
+            `Application status updated: ${application.status}`,
+            application.status === "accepted" ? "success" : "info"
+          );
+        }
+      }
+    })().finally(() => {
+      refreshPromiseRef.current = null;
+    });
+
+    return refreshPromiseRef.current;
+  }, [loadDashboardData, publicKey, pushNotification]);
 
   useEffect(() => {
     if (!publicKey) return;
-    Promise.all([
-      fetchMyJobs(publicKey),
-      fetchMyApplications(publicKey),
-      fetchBalances(publicKey),
-      fetchMyInvitations().catch(() => []),
-    ])
-      .then(([jobs, apps, balances, invites]) => {
-        setMyJobs(jobs);
-        setMyApplications(apps);
-        setBalance(balances.xlm);
-        setUsdcBalance(balances.usdc);
-        setMyInvitations(invites as JobInvitation[]);
-      })
+
+    loadDashboardData()
+      .catch(console.error)
       .finally(() => setLoading(false));
-  }, [publicKey]);
+  }, [loadDashboardData, publicKey]);
+
+  useEffect(() => {
+    syncDashboardNavBadge(notificationCount);
+    return () => syncDashboardNavBadge(0);
+  }, [notificationCount]);
+
+  useEffect(() => {
+    if (!publicKey) {
+      setNotificationCount(0);
+      seenNotificationsRef.current.clear();
+      syncDashboardNavBadge(0);
+      return;
+    }
+
+    const stopStreaming = streamAccountTransactions(publicKey, () => {
+      void refreshNotifications();
+    });
+
+    return () => {
+      stopStreaming();
+    };
+  }, [publicKey, refreshNotifications]);
 
   useEffect(() => {
     setWithdrawHistory(loadWithdrawHistory());
@@ -383,31 +333,43 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
   }
 
   return (
-    <>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 animate-fade-in">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="font-display text-3xl font-bold text-amber-100 mb-1">
-              Dashboard
-            </h1>
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="address-tag">{shortenAddress(publicKey)}</span>
-              <button
-                onClick={handleCopy}
-                className={clsx(
-                  "p-1.5 rounded-md transition-all flex items-center justify-center h-7 min-w-[28px]",
-                  copied
-                    ? "text-emerald-400 bg-emerald-400/10 border border-emerald-400/20"
-                    : copyError
-                      ? "text-red-400 bg-red-400/10 border border-red-400/20"
-                      : "text-amber-600 hover:text-amber-300 hover:bg-amber-400/10 border border-transparent",
-                )}
-                title="Copy public key"
-              >
-                {copied ? "Copied!" : copyError ? "Failed" : "Copy"}
-              </button>
-            </div>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 animate-fade-in">
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="font-display text-3xl font-bold text-amber-100">Dashboard</h1>
+            {notificationCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-market-400/15 px-2.5 py-1 text-xs font-semibold text-market-300 border border-market-400/25">
+                {notificationCount} new
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="address-tag">{shortenAddress(publicKey)}</span>
+            <button
+              onClick={handleCopy}
+              className={clsx(
+                "p-1.5 rounded-md transition-all flex items-center justify-center h-7 min-w-[28px]",
+                copied ? "text-emerald-400 bg-emerald-400/10 border border-emerald-400/20" : 
+                copyError ? "text-red-400 bg-red-400/10 border border-red-400/20" : 
+                "text-amber-600 hover:text-amber-300 hover:bg-amber-400/10 border border-transparent"
+              )}
+              title="Copy public key"
+            >
+              {copied ? (
+                <span className="text-xs font-medium px-1">Copied!</span>
+              ) : copyError ? (
+                <span className="text-xs font-medium px-1">Failed</span>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
           </div>
           <Link
             href="/post-job"
