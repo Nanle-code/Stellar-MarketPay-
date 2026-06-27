@@ -1,24 +1,20 @@
 "use strict";
 
-const shrinkRay = require("shrink-ray-current");
+const compression = require("compression");
 
 /**
  * Compression middleware.
- * Uses shrink-ray-current for Brotli support with Gzip fallback.
- * Applies compression for payloads > 1KB (1024 bytes).
+ * Uses built-in compression (gzip/deflate) for payloads > 1KB.
  */
 function compressionMiddleware() {
-  return shrinkRay({
-    threshold: 1024, // 1 KB threshold
+  return compression({
+    threshold: 1024,
     filter: (req, res) => {
-      // By default shrinkRay uses the same filter logic as compression
-      // which looks at res.getHeader('Content-Type')
       if (req.headers["x-no-compression"]) {
         return false;
       }
-      // fallback to standard filter function
-      return shrinkRay.filter(req, res);
-    }
+      return compression.filter(req, res);
+    },
   });
 }
 
