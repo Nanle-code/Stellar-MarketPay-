@@ -9,6 +9,9 @@
  *   - Returns 200 when all dependencies are healthy
  *   - Returns 503 when any critical dependency is down
  *
+ * GET /health/db
+ *   - Returns pool stats: total, idle, waiting connections
+ *
  * Response shape:
  *   {
  *     "status": "healthy" | "degraded",
@@ -24,6 +27,7 @@
 
 const express = require("express");
 const pool = require("../db/pool");
+const { getPoolStats } = require("../db/pool");
 const { createRateLimiter } = require("../middleware/rateLimiter");
 const ipfsService = require("../services/ipfsService");
 
@@ -185,50 +189,14 @@ router.get("/", healthRateLimiter, async (req, res) => {
   res.status(healthy ? 200 : 503).json(body);
 });
 
-// GET /history — last 90 entries per service
-router.get("/history", healthRateLimiter, async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT service, status, checked_at
-       FROM health_checks
-       ORDER BY checked_at DESC
-       LIMIT 270`,
-    );
-
-    const grouped = {};
-    for (const row of rows) {
-      if (!grouped[row.service]) grouped[row.service] = [];
-      if (grouped[row.service].length < 90) {
-        grouped[row.service].push({
-          status: row.status,
-          checkedAt: row.checked_at,
-        });
-      }
-    }
-
-    res.json({ success: true, data: grouped });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /subscribe — email subscription for status alerts
-router.post("/subscribe", subscribeRateLimiter, async (req, res, next) => {
-  try {
-    const { email } = req.body || {};
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ success: false, error: "Valid email required" });
-    }
-
-    await pool.query(
-      `INSERT INTO status_subscriptions (email) VALUES ($1) ON CONFLICT (email) DO NOTHING`,
-      [email.trim().toLowerCase()],
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
+// GET /health/db — pool connection stats for monitoring
+router.get("/db", healthRateLimiter, async (req, res) => {
+  const stats = getPoolStats();
+  res.json({
+    status: "ok",
+    pool: stats,
+    pool_size: parseInt(process.env.DATABASE_POOL_SIZE, 10) || 10,
+  });
 });
 
 module.exports = router;

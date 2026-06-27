@@ -34,10 +34,11 @@ function resolvePoolMax() {
   return 10;
 }
 
+const poolSize = parseInt(process.env.DATABASE_POOL_SIZE, 10) || 10;
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  // Keep a modest pool; tune per deployment via DB_POOL_MAX.
-  max: resolvePoolMax(),
+  max: poolSize,
   idleTimeoutMillis: 30_000,
 const SSL_CONFIG = process.env.NODE_ENV === "production"
   ? { rejectUnauthorized: true }
@@ -47,64 +48,26 @@ const POOL_DEFAULTS = {
   max:                    10,
   idleTimeoutMillis:      30_000,
   connectionTimeoutMillis: 5_000,
-  ssl: SSL_CONFIG,
-};
-
-// ── Write pool (primary) ──────────────────────────────────────────────────────
-const writePool = new Pool({
-  ...POOL_DEFAULTS,
-  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: true }
+    : false,
 });
 
 writePool.on("error", (err) => {
   console.error("[pg:write] Unexpected pool error:", err.message);
 });
 
-// ── Read pool (replica with primary fallback) ─────────────────────────────────
-let readPool;
-
-if (DATABASE_READ_URL) {
-  const replicaPool = new Pool({
-    ...POOL_DEFAULTS,
-    connectionString: DATABASE_READ_URL,
-  });
-
-  replicaPool.on("error", (err) => {
-    console.error("[pg:read] Replica pool error — reads will fall back to primary:", err.message);
-  });
-
-  // Proxy: attempt the replica; on connection error, retry once against primary.
-  readPool = {
-    query: async (...args) => {
-      try {
-        return await replicaPool.query(...args);
-      } catch (err) {
-        if (err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT" || err.code === "57P01") {
-          console.warn("[pg:read] Replica unavailable, falling back to primary for this query");
-          return writePool.query(...args);
-        }
-        throw err;
-      }
-    },
-    connect: async () => {
-      try {
-        return await replicaPool.connect();
-      } catch (err) {
-        if (err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT" || err.code === "57P01") {
-          console.warn("[pg:read] Replica unavailable, falling back to primary for client connection");
-          return writePool.connect();
-        }
-        throw err;
-      }
-    },
-    end: () => replicaPool.end(),
+/**
+ * Returns current pool stats for health monitoring.
+ * @returns {{ total: number, idle: number, waiting: number }}
+ */
+function getPoolStats() {
+  return {
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
   };
-} else {
-  // No replica configured — both pools point to the same primary.
-  readPool = writePool;
 }
 
-// Backward-compatible default export: writePool.
-module.exports = writePool;
-module.exports.readPool  = readPool;
-module.exports.writePool = writePool;
+module.exports = pool;
+module.exports.getPoolStats = getPoolStats;

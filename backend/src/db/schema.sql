@@ -477,94 +477,15 @@ CREATE INDEX IF NOT EXISTS notification_queue_recipient_idx ON notification_queu
 -- The notification_queue table was created without a CHECK constraint on
 -- notification_type so this is a no-op schema change (just documentation).
 
--- ─────────────────────────────────────────
--- updated_at triggers (V13)
--- ─────────────────────────────────────────
-CREATE OR REPLACE FUNCTION set_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DO $$
-DECLARE
-    t_record RECORD;
-BEGIN
-    FOR t_record IN 
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-          AND table_type = 'BASE TABLE'
-    LOOP
-        -- Add updated_at column if it does not exist
-        IF NOT EXISTS (
-            SELECT 1 
-            FROM information_schema.columns 
-            WHERE table_schema = 'public' 
-              AND table_name = t_record.table_name 
-              AND column_name = 'updated_at'
-        ) THEN
-            EXECUTE format('ALTER TABLE %I ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();', t_record.table_name);
-        END IF;
-
-        -- Drop trigger if exists (idempotent)
-        EXECUTE format('DROP TRIGGER IF EXISTS trg_set_updated_at ON %I;', t_record.table_name);
-        
-        -- Create the trigger
-        EXECUTE format('CREATE TRIGGER trg_set_updated_at BEFORE UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION set_updated_at();', t_record.table_name);
-    END LOOP;
-END;
-$$;
--- ledger_timestamps (Issue #553)
--- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS ledger_timestamps (
-  ledger    INTEGER PRIMARY KEY,
-  timestamp TIMESTAMPTZ NOT NULL
-);
+-- Exponential backoff retry support
+ALTER TABLE notification_queue
+  ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
 
 -- ─────────────────────────────────────────
--- idempotency_keys (Issue #553)
+-- Soft-delete support (Issue #469)
 -- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS idempotency_keys (
-  key        TEXT PRIMARY KEY,
-  response   JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+ALTER TABLE jobs
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
-CREATE INDEX IF NOT EXISTS idempotency_keys_cleanup_idx
-  ON idempotency_keys(created_at);
-
--- ─────────────────────────────────────────
--- health_checks (Issue #553)
--- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS health_checks (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  service    TEXT NOT NULL,
-  status     TEXT NOT NULL,
-  checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS health_checks_service_idx
-  ON health_checks(service, checked_at DESC);
-
--- ─────────────────────────────────────────
--- platform_metrics time-series (Issue #561)
--- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS platform_metrics (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  metric_name TEXT NOT NULL,
-  value       NUMERIC NOT NULL,
-  granularity TEXT NOT NULL,
-  bucket      TIMESTAMPTZ NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (metric_name, granularity, bucket)
-);
-
-CREATE INDEX IF NOT EXISTS platform_metrics_lookup_idx
-  ON platform_metrics (metric_name, granularity, bucket DESC);
-
-CREATE INDEX IF NOT EXISTS platform_metrics_cleanup_idx
-  ON platform_metrics (bucket)
-  WHERE bucket < NOW() - INTERVAL '1 year';
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
