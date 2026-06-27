@@ -11,7 +11,6 @@ import {
   Operation,
   Asset,
   Memo,
-  Transaction,
 } from "@stellar/stellar-sdk";
 import * as SorobanRpc from "@stellar/stellar-sdk/rpc";
 import { optionalClientEnv, requireClientEnv } from "./env";

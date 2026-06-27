@@ -34,7 +34,6 @@ const STELLAR_NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || "testnet";
 export default function Navbar({ publicKey, onConnect, onDisconnect }: NavbarProps) {
   const router = useRouter();
   const { t, i18n } = useTranslation("common");
-  const switchLanguage = (lng: string) => i18n?.changeLanguage(lng);
   const [hasNotification, setHasNotification] = useState(false);
   const [hasJobAlertBadge, setHasJobAlertBadge] = useState(false);
   const { currencyMode, setCurrencyMode, priceLoading } = usePriceContext();
@@ -175,6 +174,13 @@ export default function Navbar({ publicKey, onConnect, onDisconnect }: NavbarPro
             value={i18n.language}
             onChange={(e) => switchLanguage(e.target.value)}
             className="bg-market-900/40 border border-amber-900/30 rounded px-2 py-1 text-xs text-amber-100 cursor-pointer min-h-[44px]"
+          >
+            <option value="en">EN</option>
+            <option value="es">ES</option>
+            <option value="fr">FR</option>
+            <option value="pt">PT</option>
+          </select>
+        </div>
         {/* Currency Toggle */}
         <div className="hidden md:flex items-center">
           <button
@@ -332,7 +338,6 @@ export default function Navbar({ publicKey, onConnect, onDisconnect }: NavbarPro
         </div>
       )}
     </nav>
-    </>
   );
 }
 

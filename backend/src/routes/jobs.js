@@ -21,12 +21,23 @@ const {
   raiseDispute,
   resolveDispute,
   getRecommendedJobs,
+  incrementViewCount,
+  extendJobExpiry,
+  getSuggestions,
 } = jobService.default || jobService;
-const { inviteFreelancerToJob } = require("../services/jobInvitationService");
+
 const { logContractInteraction } = require("../services/contractAuditService");
+const { getClientReputation } = require("../services/profileService");
+const cache = require("../services/cacheService");
+const jobDraftService = require("../services/jobDraftService");
+const recommendationService = require("../services/recommendationService");
 
 const jobCreationRateLimiter = createRateLimiter(10, 1); // 10 job creations per minute
 const generalJobRateLimiter = createRateLimiter(100, 1); // 100 requests per minute
+const reportJobRateLimiter = createRateLimiter(20, 1);
+const suggestRateLimiter = createRateLimiter(20, 1);
+
+const jobReports = new Map();
 
 // Feed Helpers
 
@@ -115,7 +126,6 @@ async function enrichJobsWithClientReputation(jobs) {
  * /api/jobs:
  *   get:
  *     summary: List jobs
-              - clientAddress
  *     tags: [Jobs]
  *     parameters:
  *       - in: query
@@ -328,11 +338,11 @@ router.get("/:id", generalJobRateLimiter, async (req, res, next) => {
  *               - clientId
  *             properties:
  *               title:
-                clientAddress:
-                  type: string
-                  description: Client's Stellar address
  *                 type: string
  *                 description: Detailed job description
+ *               clientAddress:
+ *                 type: string
+ *                 description: Client's Stellar address
  *               budget:
  *                 type: number
  *                 description: Job budget in XLM
@@ -771,6 +781,18 @@ router.delete("/drafts/:id", verifyJWT, async (req, res, next) => {
   try {
     await jobDraftService.deleteDraft(req.params.id, req.user.publicKey);
     res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// PUT /api/jobs/drafts/:id — upsert a job draft (partial data)
+router.put("/drafts/:id", verifyJWT, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const draftData = { id, ...req.body };
+    const draft = await jobDraftService.saveDraft(req.user.publicKey, draftData);
+    res.json({ success: true, data: draft });
   } catch (e) {
     next(e);
   }

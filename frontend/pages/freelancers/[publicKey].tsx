@@ -38,7 +38,6 @@ import type {
   SkillBadge,
   SkillEndorsement,
   UserProfile,
-  SkillBadge,
 } from "@/utils/types";
 
 type LoadState =

@@ -3,7 +3,7 @@
  * Browse all open jobs with category filtering and search autocomplete.
  */
 import JobCard, { JobCardSkeleton } from "@/components/JobCard";
-import { fetchJobs, fetchRecommendedJobs, fetchJobSuggestions, type JobSuggestion as Suggestion } from "@/lib/api";
+import { fetchJobs, fetchRecommendedJobs, fetchJobSuggestions, type JobSuggestion as APISuggestion } from "@/lib/api";
 import StateMessage from "@/components/StateMessage";
 import { JOB_CATEGORIES, CATEGORY_ICONS, categoryToSlug } from "@/utils/format";
 import type { Job } from "@/utils/types";
@@ -21,30 +21,42 @@ import { getTimezoneOffset } from "date-fns-tz";
 import { getConnectedPublicKey } from "@/lib/wallet";
 import { useBookmarks } from "@/hooks/useBookmarks";
 import { createSavedSearch, fetchSavedSearches, type SavedSearch } from "@/lib/api";
+import { useVirtualizer } from "@tanstack/react-virtual";
+
+// Intersection Observer hook for infinite scroll
+function useInfiniteScroll(callback: () => void, hasNextPage: boolean, isLoading: boolean) {
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const lastElementRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (isLoading || !hasNextPage) return;
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          callback();
+        }
+      },
+      { threshold: 0.1, rootMargin: "100px" }
+    );
+
+    if (lastElementRef.current) {
+      observerRef.current.observe(lastElementRef.current);
+    }
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [callback, hasNextPage, isLoading]);
+
+  return lastElementRef;
+}
 
 interface Suggestion {
   type: string;
   value: string;
-}
-
-function BriefcaseMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
-}
-function TagMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>;
-}
-function CategoryMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>;
-}
-
-function BriefcaseMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
-}
-function TagMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>;
-}
-function CategoryMiniIcon() {
-  return <svg className="w-3 h-3 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>;
 }
 
 // ── Job Alert localStorage helpers ──────────────────────────────────────────
@@ -76,7 +88,6 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
   const { i18n } = useTranslation("common");
   const t = (key: string): string => String(i18n.t(key));
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [viewerAddress, setViewerAddress] = useState<string>("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
@@ -97,20 +108,14 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
   const [useGeolocation, setUseGeolocation] = useState<boolean>(false);
   const [geoLoading, setGeoLoading] = useState<boolean>(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const activeTimezoneRef = useRef<string>(manualTimezone || (useGeolocation ? userTimezone : ""));
 
   // ── Job-alert state ────────────────────────────────────────────────────────
   const [alertedCategories, setAlertedCategories] = useState<string[]>([]);
   const [alertStatus, setAlertStatus] = useState<"idle" | "granted" | "denied">("idle");
   const [viewerAddress, setViewerAddress] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [activeSuggestion, setActiveSuggestion] = useState(0);
-  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [focusedJobId, setFocusedJobId] = useState<string | null>(null);
 
-  const searchRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toggleBookmark } = useBookmarks();
 
   // ── Saved search state (Issue #284) ────────────────────────────────────────
@@ -316,7 +321,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
         let pagesLoaded = 0;
         let allJobs: Job[] = [];
 
-        activeTimezone = manualTimezone || (useGeolocation ? userTimezone : "");
+        activeTimezoneRef.current = manualTimezone || (useGeolocation ? userTimezone : "");
 
         for (let page = 1; page <= pageFromQuery; page += 1) {
           const result = await fetchJobs({
@@ -324,7 +329,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
             status: status || undefined,
             limit: 20,
             cursor,
-            timezone: activeTimezone || undefined,
+            timezone: activeTimezoneRef.current || undefined,
             viewerAddress: viewerAddress || undefined,
             minBudget: minBudget || undefined,
             maxBudget: maxBudget || undefined,
@@ -484,7 +489,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
     );
   };
 
-  const handleLoadMore = async () => {
+  const handleLoadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
 
     setLoadingMore(true);
@@ -528,7 +533,104 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [nextCursor, loadingMore, manualTimezone, useGeolocation, userTimezone, category, status, viewerAddress, minBudget, maxBudget, filterQuery, currentPage, router]);
+
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [isMobile, setIsMobile] = useState(true);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  const cols = isMobile ? 1 : 2;
+
+  // Group jobs into rows
+  const groupedJobs: Job[][] = [];
+  for (let i = 0; i < filtered.length; i += cols) {
+    groupedJobs.push(filtered.slice(i, i + cols));
+  }
+
+  // Scroll margin tracks top offset of the list
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useEffect(() => {
+    if (parentRef.current) {
+      setScrollMargin(parentRef.current.offsetTop);
+    }
+  }, [filtered]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: groupedJobs.length,
+    getScrollElement: () => (typeof window !== "undefined" ? window as any : null),
+    estimateSize: () => 200,
+    overscan: 5,
+    scrollMargin,
+  });
+
+  // Re-wire infinite scroll using virtualizer index changes
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  useEffect(() => {
+    const lastItem = virtualItems[virtualItems.length - 1];
+    if (
+      lastItem &&
+      lastItem.index >= groupedJobs.length - 2 && // load when 2 rows from the end
+      nextCursor &&
+      !loadingMore
+    ) {
+      handleLoadMore();
+    }
+  }, [virtualItems, groupedJobs.length, nextCursor, loadingMore, handleLoadMore]);
+
+  // Arrow keys navigation for job cards
+  const focusedIndex = filtered.findIndex((j) => j.id === focusedJobId);
+
+  useEffect(() => {
+    if (focusedIndex >= 0) {
+      const rowIndex = Math.floor(focusedIndex / cols);
+      rowVirtualizer.scrollToIndex(rowIndex, { align: "auto" });
+    }
+  }, [focusedIndex, cols, rowVirtualizer]);
+
+  useEffect(() => {
+    const handleArrowNav = (e: KeyboardEvent) => {
+      if (!(e.target instanceof HTMLElement)) return;
+      const tagName = e.target.tagName.toLowerCase();
+      if (tagName === "input" || tagName === "textarea" || tagName === "select" || e.target.isContentEditable) {
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIdx = focusedIndex + 1;
+        if (nextIdx < filtered.length) {
+          const nextJob = filtered[nextIdx];
+          setFocusedJobId(nextJob.id);
+          setTimeout(() => {
+            const el = document.querySelector(`[data-job-card-focus="true"]`) as HTMLElement;
+            el?.focus();
+          }, 50);
+        }
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIdx = focusedIndex - 1;
+        if (prevIdx >= 0) {
+          const prevJob = filtered[prevIdx];
+          setFocusedJobId(prevJob.id);
+          setTimeout(() => {
+            const el = document.querySelector(`[data-job-card-focus="true"]`) as HTMLElement;
+            el?.focus();
+          }, 50);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleArrowNav);
+    return () => window.removeEventListener("keydown", handleArrowNav);
+  }, [focusedIndex, filtered, focusedJobId]);
 
   const setBudgetRange = (min: string, max: string) => {
     router.push({
@@ -1014,32 +1116,52 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
               <Link href="/post-job" className="btn-primary text-sm">Post the first job</Link>
             </div>
           ) : (
-            <>
-              <div className="grid sm:grid-cols-2 gap-4">
-                {filtered.map((job) => (
-                  <JobCard
-                    key={job.id}
-                    job={job}
-                    isFocused={focusedJobId === job.id}
-                    onFocus={() => setFocusedJobId(job.id)}
-                  />
-                ))}
+            <div ref={parentRef} className="w-full">
+              <div
+                style={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: "100%",
+                  position: "relative",
+                }}
+              >
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const rowJobs = groupedJobs[virtualRow.index];
+                  if (!rowJobs) return null;
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        height: `${virtualRow.size}px`,
+                        transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                      }}
+                      className="grid sm:grid-cols-2 gap-4 pb-4"
+                    >
+                      {rowJobs.map((job) => (
+                        <JobCard
+                          key={job.id}
+                          job={job}
+                          isFocused={focusedJobId === job.id}
+                          onFocus={() => setFocusedJobId(job.id)}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
 
-              {nextCursor && (
+              {loadingMore && (
                 <div className="mt-8 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={handleLoadMore}
-                    disabled={loadingMore}
-                    className="btn-secondary text-sm min-w-40 min-h-[44px] flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                  >
-                    {loadingMore && <SpinnerIcon className="w-4 h-4 animate-spin" />}
-                    {loadingMore ? t("jobs.loading") : t("jobs.loadMore")}
-                  </button>
+                  <div className="flex items-center gap-2 text-amber-800 text-sm">
+                    <SpinnerIcon className="w-4 h-4 animate-spin" />
+                    {t("jobs.loading")}
+                  </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
       </div>

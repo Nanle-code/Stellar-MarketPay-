@@ -141,8 +141,6 @@ export default function JobCard({ job, isFocused = false, onFocus }: JobCardProp
   }, []);
   // ──────────────────────────────────────────────────────────────────────────────────
 
-  const clientRepBadge = getClientReputationBadge(job.clientReputationScore);
-
   const hasValidDeadline = Boolean(job.deadline && formatDeadline(job.deadline));
   const formattedDeadline = job.deadline ? formatDeadline(job.deadline) : "";
   const deadlineState = getDeadlineState(job.deadline);

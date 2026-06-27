@@ -1,6 +1,7 @@
 import type { AppProps } from "next/app";
 import { useState, useEffect, useCallback } from "react";
 import Head from "next/head";
+import Script from "next/script";
 import { useRouter } from "next/router";
 import Navbar from "@/components/Navbar";
 import FaucetButton from "@/components/FaucetButton";
@@ -18,15 +19,26 @@ import {
   logout,
   registerReferral,
 } from "@/lib/api";
+import { useToast } from "@/components/Toast";
+import WalletAccountMonitor from "@/components/WalletAccountMonitor";
 import "@/styles/globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { PriceProvider } from "@/contexts/PriceContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
-import ShortcutsModal from "@/components/ShortcutsModal";
+
 import OfflineBanner from "@/components/OfflineBanner";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useBackgroundSync } from "@/hooks/useBackgroundSync";
 import "../lib/i18n";
+
+const WALLET_PUBLIC_KEY_STORAGE_KEY = "smp_wallet_public_key";
+const REF_STORAGE_KEY = "smp_referrer";
+
+function loadStoredPublicKey(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(WALLET_PUBLIC_KEY_STORAGE_KEY);
+}
+
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
@@ -55,7 +67,7 @@ function ThemeToggle() {
 }
 
 function App({ Component, pageProps }: AppProps) {
-  const [publicKey, setPublicKey] = useState<string | null>(() => loadStoredPublicKey());
+  const [publicKey, setPublicKey] = useState<string | null>(null);
   const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<{
     prompt: () => Promise<void>;
@@ -63,6 +75,7 @@ function App({ Component, pageProps }: AppProps) {
   } | null>(null);
   const [installDismissed, setInstallDismissed] = useState(false);
   const router = useRouter();
+  const isJobDetailPage = router.pathname === "/jobs/[id]";
 
   // Background sync: refresh the current page when the SW replays queued requests
   useBackgroundSync({
@@ -77,7 +90,13 @@ function App({ Component, pageProps }: AppProps) {
     if (ref && /^G[A-Z0-9]{55}$/.test(ref)) {
       localStorage.setItem(REF_STORAGE_KEY, ref);
     }
-  }, []);
+    
+    // Hydration fix: load public key after mount
+    const storedKey = loadStoredPublicKey();
+    if (storedKey && !publicKey) {
+      setPublicKey(storedKey);
+    }
+  }, [publicKey]);
 
   const handleOpenShortcutsModal = useCallback(() => {
     setShortcutsModalOpen(true);
@@ -206,15 +225,39 @@ function App({ Component, pageProps }: AppProps) {
     }
   };
 
+  const handleWalletDisconnect = useCallback(() => {
+    persistPublicKey(null);
+  }, [persistPublicKey]);
+
   return (
     <>
+      {/*
+       * Non-critical third-party scripts — loaded after the page is interactive
+       * so they don't block TTI. Add any analytics, widgets, or tracking scripts
+       * here using strategy="lazyOnload". They run after hydration completes.
+       *
+       * Example (uncomment and replace src with your script URL):
+       *   <Script src="https://example.com/analytics.js" strategy="lazyOnload" />
+       *
+       * For CPU-intensive scripts (analytics, chat widgets), consider Partytown:
+       *   npm install @builder.io/partytown
+       *   Then use strategy="worker" to offload to a web worker thread.
+       */}
       <ThemeProvider>
         <ToastProvider>
           <PriceProvider>
+            <WalletAccountMonitor
+              currentPublicKey={publicKey}
+              onDisconnect={handleWalletDisconnect}
+            />
             <Head>
               <title>Stellar MarketPay — Decentralised Freelance Marketplace</title>
               <meta name="description" content="Post jobs, hire freelancers, and pay with XLM — secured by Soroban smart contracts." />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <meta name="theme-color" content="#f59e0b" />
+              <meta name="apple-mobile-web-app-capable" content="yes" />
+              <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+              <meta name="apple-mobile-web-app-title" content="MarketPay" />
               <link rel="manifest" href="/manifest.json" />
               <link rel="apple-touch-icon" href="/icon-192x192.png" />
               <link rel="alternate" type="application/rss+xml" title="Stellar MarketPay — Job Listings (RSS)" href="/api/jobs/feed.rss" />
@@ -228,7 +271,7 @@ function App({ Component, pageProps }: AppProps) {
               </main>
               {publicKey && <FaucetButton publicKey={publicKey} />}
               <ThemeToggle />
-              <ShortcutsModal
+              <KeyboardShortcutsModal
                 isOpen={shortcutsModalOpen}
                 onClose={() => setShortcutsModalOpen(false)}
                 showJobDetailShortcuts={isJobDetailPage}

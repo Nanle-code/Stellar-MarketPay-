@@ -150,19 +150,6 @@ export interface UserProfile {
   blockedAddresses?: string[];
 }
 
-export interface SkillEndorsement {
-  skill: string;
-  count: number;
-  endorsers: string[];
-}
-
-export interface SkillBadge {
-  skill: string;
-  score: number;
-  passed: boolean;
-  taken_at: string;
-}
-
 export interface ProfileStats {
   totalApplications: number;
   acceptedApplications: number;
@@ -208,8 +195,14 @@ export interface ClientSpendingFreelancer {
   totalPaidXlm: string;
 }
 
+export interface ClientSpendingMonthly {
+  month: string; // "YYYY-MM"
+  totalSpentXlm: number;
+}
+
 export interface ClientSpendingAnalytics {
   totalSpentXlm: string;
+  totalBudgetXlm?: string;
   jobsBreakdown: {
     posted: number;
     completed: number;
@@ -220,6 +213,7 @@ export interface ClientSpendingAnalytics {
   averagePaidXlm: string;
   topFreelancers: ClientSpendingFreelancer[];
   hasCompletedJobs: boolean;
+  monthly?: ClientSpendingMonthly[];
 }
 
 export interface EscrowState {
@@ -242,6 +236,11 @@ export interface Message {
   createdAt: string;
   ipfsCid?: string;
   txHash?: string;
+  attachmentCid?:  string | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  attachmentMime?: string | null;
+  senderNaclPub?:  string | null;
 }
 
 export interface PortfolioFile {
@@ -250,21 +249,6 @@ export interface PortfolioFile {
   mimeType: string;
   size: number;
   uploadedAt: string;
-}
-
-export interface JobAnalytics {
-  applicationsPerDay: { day: string; count: number }[];
-  averageBidAmount: { currency: string; avgBid: number; count: number }[];
-  applicationStatusCounts: { pending?: number; accepted?: number; rejected?: number; [key: string]: number | undefined };
-  skillDistribution: Record<string, number>;
-  daysToHire: number | null;
-  timeToHire?: number | null;
-}
-
-export interface AssessmentQuestion {
-  id: number;
-  question: string;
-  options: string[];
 }
 
 export interface TokenInfo {
@@ -372,11 +356,12 @@ export interface JobAnalytics {
     bidAmount: string;
     createdAt: string;
   }>;
-  applicationsPerDay: Array<{ day: string; count: number }>;
-  averageBidAmount: Array<{ currency: string; avgBid: number; count: number }>;
+  applicationsPerDay: { day: string; count: number }[];
+  averageBidAmount: { currency: string; avgBid: number; count: number }[];
+  applicationStatusCounts: { pending?: number; accepted?: number; rejected?: number; [key: string]: number | undefined };
   skillDistribution: Record<string, number>;
   daysToHire: number | null;
-  applicationStatusCounts: Record<string, number>;
+  timeToHire?: number | null;
 }
 
 // ─── Bulk Actions ────────────────────────────────────────────────────────────
@@ -404,4 +389,13 @@ export interface JobInvitation {
   jobCurrency: Currency;
   status: "pending" | "accepted" | "declined";
   createdAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  adminAddress: string;
+  action: string;
+  resource: string;
+  timestamp: string;
+  changesDiff?: Record<string, any>;
 }

@@ -35,7 +35,11 @@ export default function PostJob({ publicKey, onConnect }: PostJobProps) {
           <WalletConnect onConnect={onConnect} />
         </div>
       ) : (
-        <PostJobForm />
+        <PostJobForm
+          publicKey={publicKey}
+          initialCategory={category}
+          suggestedFreelancer={suggestedFreelancer}
+        />
       )}
     </div>
   );
