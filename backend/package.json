@@ -9,6 +9,7 @@
         "lint": "eslint src/**/*.js",
         "test": "jest --coverage",
         "test:unit": "jest",
+        "test:integration": "jest --testPathPattern=src/tests/integration --runInBand",
         "test:property": "jest --testPathPatterns='\\.property\\.test\\.js$'",
         "generate-openapi": "node scripts/generate-openapi.js",
         "build": "npm run generate-openapi && npm run lint",
@@ -72,6 +73,10 @@
         "setupFiles": [
             "<rootDir>/jest.setup.js"
         ],
+        "testPathIgnorePatterns": [
+            "/node_modules/",
+            "src/tests/integration"
+        ],
         "collectCoverageFrom": [
             "src/middleware/sanitize.js",
             "src/services/profileService.js",
@@ -96,6 +101,34 @@
         ],
         "moduleNameMapper": {
             "^(\\.{1,2}/.*)\\.js$": "$1"
-        }
+        },
+        "projects": [
+            {
+                "displayName": "unit",
+                "testEnvironment": "node",
+                "setupFiles": ["<rootDir>/jest.setup.js"],
+                "testPathIgnorePatterns": ["/node_modules/", "src/tests/integration"],
+                "transformIgnorePatterns": [
+                    "node_modules/(?!(isomorphic-dompurify|dompurify|@exodus)/)"
+                ],
+                "moduleNameMapper": {
+                    "^(\\.{1,2}/.*)\\.js$": "$1"
+                }
+            },
+            {
+                "displayName": "integration",
+                "testEnvironment": "node",
+                "testMatch": ["**/src/tests/integration/**/*.test.js"],
+                "setupFiles": ["<rootDir>/jest.setup.js"],
+                "testTimeout": 30000,
+                "runInBand": true,
+                "transformIgnorePatterns": [
+                    "node_modules/(?!(isomorphic-dompurify|dompurify|@exodus)/)"
+                ],
+                "moduleNameMapper": {
+                    "^(\\.{1,2}/.*)\\.js$": "$1"
+                }
+            }
+        ]
     }
 }
