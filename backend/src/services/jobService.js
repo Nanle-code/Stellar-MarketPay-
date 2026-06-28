@@ -228,6 +228,8 @@ function rowToJob(row) {
     viewCount: row.view_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    searchHeadline: row.headline_title || null,
+    descriptionHeadline: row.headline_description || null,
   };
 }
 
@@ -482,8 +484,8 @@ async function listJobs({
   cursor,
   // eslint-disable-next-line no-unused-vars
   timezone,
-  includeExpired,
   viewerAddress,
+  includeExpired,
   includeDeleted = false,
   min_budget,
   max_budget,
@@ -495,6 +497,21 @@ async function listJobs({
 } = {}) {
   const conditions = [];
   const params = [];
+  let selectColumns = "jobs.*";
+  let orderClause = `CASE WHEN boosted = true AND (boosted_until IS NULL OR boosted_until > NOW()) THEN 0 ELSE 1 END, created_at DESC, id DESC`;
+
+  if (search && search.trim()) {
+    params.push(search.trim());
+    const searchIdx = params.length;
+    selectColumns = `jobs.*,
+      ts_rank(search_vector, websearch_to_tsquery('english', $${searchIdx})) AS rank,
+      ts_headline(title, websearch_to_tsquery('english', $${searchIdx}),
+        'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=20') AS headline_title,
+      ts_headline(description, websearch_to_tsquery('english', $${searchIdx}),
+        'StartSel=<mark>,StopSel=</mark>,MaxWords=80,MinWords=30') AS headline_description`;
+    conditions.push(`search_vector @@ websearch_to_tsquery('english', $${searchIdx})`);
+    orderClause = `rank DESC, ${orderClause}`;
+  }
 
   if (!includeDeleted) {
     conditions.push("deleted_at IS NULL");
@@ -515,6 +532,7 @@ async function listJobs({
       OR jobs.category = $${params.length}
     )`);
   }
+
 
   const minBudget = parseFloat(min_budget);
   if (!Number.isNaN(minBudget)) {
@@ -576,26 +594,6 @@ async function listJobs({
     params.push(maxApps);
     conditions.push(`applicant_count <= $${params.length}`);
   }
-
-  if (search) {
-    const normalizedSearch = String(search).trim().toLowerCase();
-    const tsQuery = normalizedSearch
-      .split(/\s+/)
-      .filter(Boolean)
-      .join(" & ");
-    params.push(tsQuery || normalizedSearch);
-    const tsIdx = params.length;
-    params.push(`%${normalizedSearch}%`);
-    const likeIdx = params.length;
-    conditions.push(
-      `(
-        job_search_vector @@ to_tsquery('simple', $${tsIdx})
-        OR LOWER(title) LIKE $${likeIdx}
-        OR LOWER(description) LIKE $${likeIdx}
-      )`,
-    );
-  }
-
   if (viewerAddress && /^G[A-Z0-9]{55}$/.test(viewerAddress)) {
     params.push(viewerAddress);
     const viewerIdx = params.length;
@@ -611,7 +609,7 @@ async function listJobs({
     conditions.push("visibility = 'public'");
   }
 
-  if (cursor) {
+  if (cursor && !search) {
     const decoded = decodeCursor(cursor);
     params.push(decoded.createdAt, decoded.id);
     const createdAtIdx = params.length - 1;
@@ -626,16 +624,24 @@ async function listJobs({
   params.push(limit);
 
   const { rows } = await readPool.query(
-    `${JOB_SELECT_CLAUSE} ${where} ORDER BY
-       CASE WHEN boosted = true AND (boosted_until IS NULL OR boosted_until > NOW()) THEN 0 ELSE 1 END,
-       created_at DESC, id DESC LIMIT $${params.length}`,
+    `SELECT ${selectColumns}, COALESCE(agg.skills, '{}') AS skills
+     FROM jobs
+     LEFT JOIN LATERAL (
+       SELECT array_agg(s.display_name ORDER BY s.display_name) AS skills
+       FROM   job_skills js
+       JOIN   skills s ON s.id = js.skill_id
+       WHERE  js.job_id = jobs.id
+     ) agg ON true
+     ${where}
+     ORDER BY ${orderClause}
+     LIMIT $${params.length}`,
     params,
   );
 
   const jobs = rows.map(rowToJob);
   let nextCursor = null;
 
-  if (rows.length === limit) {
+  if (rows.length === limit && !search) {
     nextCursor = encodeCursor(rows[rows.length - 1]);
   }
 
@@ -1263,17 +1269,23 @@ async function getSuggestions(query) {
   }
 
   const q = query.trim();
-  const likePattern = `%${q}%`;
 
   try {
     const [titleResults, skillResults] = await Promise.all([
       pool.query(
-        `SELECT DISTINCT title FROM jobs WHERE title ILIKE $1 AND status = 'open' AND deleted_at IS NULL ORDER BY title LIMIT 5`,
-        [likePattern]
+        `SELECT DISTINCT title FROM jobs
+         WHERE search_vector @@ websearch_to_tsquery('english', $1)
+           AND status = 'open'
+           AND deleted_at IS NULL
+         ORDER BY title LIMIT 5`,
+        [q]
       ),
       pool.query(
-        `SELECT DISTINCT skill FROM (SELECT unnest(skills) as skill FROM jobs WHERE status = 'open' AND deleted_at IS NULL) skills WHERE skill ILIKE $1 ORDER BY skill LIMIT 3`,
-        [likePattern]
+        `SELECT DISTINCT skill
+         FROM (SELECT unnest(skills) AS skill FROM jobs WHERE status = 'open' AND deleted_at IS NULL) skills
+         WHERE skill ILIKE $1
+         ORDER BY skill LIMIT 3`,
+        [`%${q}%`]
       ),
     ]);
 

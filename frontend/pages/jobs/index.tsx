@@ -306,6 +306,8 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
     }
   };
 
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!router.isReady) return;
 
@@ -321,6 +323,13 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
         let pagesLoaded = 0;
         let allJobs: Job[] = [];
 
+        const activeTimezone = manualTimezone || (useGeolocation ? userTimezone : "");
+        const activeSearch = search.trim() || undefined;
+
+        if (activeSearch && pageFromQuery > 1) {
+          return;
+        }
+
         activeTimezoneRef.current = manualTimezone || (useGeolocation ? userTimezone : "");
 
         for (let page = 1; page <= pageFromQuery; page += 1) {
@@ -328,6 +337,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
             category: category || undefined,
             status: status || undefined,
             limit: 20,
+            search: activeSearch,
             cursor,
             timezone: activeTimezoneRef.current || undefined,
             viewerAddress: viewerAddress || undefined,
@@ -362,9 +372,18 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
       }
     }
 
-    loadJobs();
+    if (searchDebounce.current) {
+      clearTimeout(searchDebounce.current);
+    }
 
-    return () => { isCancelled = true; };
+    searchDebounce.current = setTimeout(() => {
+      loadJobs();
+    }, 300);
+
+    return () => {
+      isCancelled = true;
+      if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    };
   }, [
     category,
     status,
@@ -374,6 +393,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
     useGeolocation,
     userTimezone,
     viewerAddress,
+    search,
     minBudget,
     maxBudget,
     filterQuery.skills,
@@ -468,13 +488,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const searchFiltered = search.trim()
-    ? jobs.filter((j) =>
-      j.title.toLowerCase().includes(search.toLowerCase()) ||
-      j.description.toLowerCase().includes(search.toLowerCase()) ||
-      j.skills.some((s) => s.toLowerCase().includes(search.toLowerCase()))
-    )
-    : jobs;
+  const searchFiltered = jobs;
 
   activeTimezone = manualTimezone || (useGeolocation ? userTimezone : "");
   const filtered = activeTimezone
@@ -502,6 +516,7 @@ export default function JobsPage({ publicKey }: { publicKey?: string | null }) {
         category: category || undefined,
         status: status || undefined,
         limit: 20,
+        search: search.trim() || undefined,
         cursor: nextCursor,
         timezone: activeTimezone || undefined,
         viewerAddress: viewerAddress || undefined,
