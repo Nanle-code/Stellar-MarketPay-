@@ -25,6 +25,8 @@ const { getRateLimitScale } = require("./middleware/rateLimiter");
 const { requireChoice } = require("./config/env");
 const { createCorsOptions } = require("./config/cors");
 const { verifyCSRF } = require("./middleware/csrf");
+const { structuredErrorHandler } = require("./utils/errors");
+const { jsonDepthLimitMiddleware } = require("./middleware/jsonbValidator");
 
 const jobRoutes       = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
@@ -407,18 +409,13 @@ app.use("/api/gas-estimate",   gasEstimatorRoutes);
 app.use("/api/transactions",   transactionRoutes);
 
 app.use((err, req, res, next) => {
-  void next;
-
   logError(req.logger || serviceLogger, err, {
     method: req.method,
     path: req.path,
     userId: req.user?.publicKey,
     requestId: req.requestId,
   });
-
-  res.status(err.status || 500).json({
-    error: err.message || "Internal server error",
-  });
+  structuredErrorHandler(err, req, res, next);
 });
 
 const wsServer = new WebSocketServer({ noServer: true });
